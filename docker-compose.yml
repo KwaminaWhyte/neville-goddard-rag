@@ -1,0 +1,41 @@
+# Neville stack infra: Postgres (pgvector + Apache AGE) + LightRAG server.
+# Ollama runs on the host; containers reach it via host.docker.internal.
+services:
+  postgres:
+    build: ./postgres
+    image: neville-postgres:pg18-age-pgvector
+    container_name: neville-postgres
+    environment:
+      POSTGRES_USER: rag
+      POSTGRES_PASSWORD: rag
+      POSTGRES_DB: rag
+    ports:
+      # Publish port comes from root .env (PG_PUBLISH_PORT). setup.sh picks 5544
+      # if 5432 is already taken (e.g. a local Homebrew/system Postgres).
+      - "${PG_PUBLISH_PORT:-5432}:5432"
+    volumes:
+      # PG18 stores data in a major-version subdir under this mount point.
+      - ./data/postgres:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rag -d rag"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  lightrag:
+    image: ghcr.io/hkuds/lightrag:latest
+    container_name: neville-lightrag
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "9621:9621"
+    env_file:
+      - ./lightrag.env
+    volumes:
+      - ./data/rag_storage:/app/data/rag_storage
+      - ./data/inputs:/app/data/inputs
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
