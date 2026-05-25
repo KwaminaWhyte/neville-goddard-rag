@@ -1,7 +1,7 @@
 // "Today's process" card — the day's personalized practice, composed from the
 // end-scene, recent log, and Neville's teaching. Lets the user (re)generate it.
 import { useState } from "react";
-import { StyleSheet, View } from "react-native";
+import { Image, StyleSheet, View } from "react-native";
 import { generateProcess } from "../lib/api";
 import type { Process } from "../lib/types";
 import { colors, space } from "../lib/theme";
@@ -35,6 +35,11 @@ export default function DailyProcess({
 
   return (
     <Card>
+      <Image
+        source={require("../assets/illustrations/process.png")}
+        style={styles.banner}
+        resizeMode="cover"
+      />
       <View style={styles.header}>
         <SectionTitle color={colors.gold}>Today's process — Day {day}</SectionTitle>
         <Button
@@ -59,6 +64,14 @@ export default function DailyProcess({
 }
 
 const styles = StyleSheet.create({
+  banner: {
+    width: "100%",
+    height: 120,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: colors.line,
+    marginBottom: space.md,
+  },
   header: {
     flexDirection: "row",
     justifyContent: "space-between",

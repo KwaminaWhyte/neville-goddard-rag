@@ -20,6 +20,7 @@ import {
   checkEmbeddingDrift,
 } from "../lib/db.server";
 import { generateDailyProcess, generateEndScene } from "../lib/coach.server";
+import { requireUser } from "../lib/auth.server";
 import { updateEndSceneNote } from "../lib/db.server";
 import { healthStatus } from "../lib/lightrag.server";
 import { ollamaHealth } from "../lib/ollama.server";
@@ -37,8 +38,9 @@ async function safe<T>(p: Promise<T>, fallback: T): Promise<T> {
 }
 
 export async function loader({ params, request }: Route.LoaderArgs) {
+  const user = await requireUser(request);
   const id = Number(params.id);
-  const goal = await getGoal(id);
+  const goal = await getGoal(id, user.id);
   if (!goal) throw new Response("Not found", { status: 404 });
   const day = dayNumber(goal);
   const url = new URL(request.url);
@@ -75,10 +77,11 @@ export async function loader({ params, request }: Route.LoaderArgs) {
 }
 
 export async function action({ request, params }: Route.ActionArgs) {
+  const user = await requireUser(request);
   const id = Number(params.id);
   const fd = await request.formData();
   const intent = String(fd.get("intent"));
-  const goal = await getGoal(id);
+  const goal = await getGoal(id, user.id);
   if (!goal) throw new Response("Not found", { status: 404 });
 
   if (intent === "process") {
@@ -184,6 +187,11 @@ export default function GoalPage({ loaderData }: Route.ComponentProps) {
 
       {/* End scene */}
       <section className="mb-8 rounded-xl border border-[var(--color-line)] bg-[var(--color-panel)] p-6">
+        <img
+          src="/illustrations/endscene.png"
+          alt="Celestial illustration"
+          className="mb-4 h-28 w-full rounded-lg border border-[var(--color-line)] object-cover"
+        />
         <div className="mb-2 flex items-center justify-between">
           <h2 className="serif text-lg text-[var(--color-accent)]">Live in the end</h2>
           <Form method="post">
@@ -221,6 +229,11 @@ export default function GoalPage({ loaderData }: Route.ComponentProps) {
 
       {/* Daily process */}
       <section className="mb-8 rounded-xl border border-[var(--color-line)] bg-[var(--color-panel)] p-6">
+        <img
+          src="/illustrations/process.png"
+          alt="Celestial illustration"
+          className="mb-4 h-28 w-full rounded-lg border border-[var(--color-line)] object-cover"
+        />
         <div className="mb-3 flex items-center justify-between">
           <h2 className="serif text-lg text-[var(--color-gold)]">Today's process — Day {day}</h2>
           <Form method="post">

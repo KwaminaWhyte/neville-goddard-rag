@@ -1,17 +1,28 @@
 import type { Route } from "./+types/coach";
 import { coachChatStream } from "../../lib/coach.server";
 import type { ChatMsg } from "../../lib/ollama.server";
-import { addChat, clearChats } from "../../lib/db.server";
+import { addChat, clearChats, getGoal } from "../../lib/db.server";
+import { requireUser } from "../../lib/auth.server";
+import { json, preflight } from "../../lib/api.server";
 
 // Streams the coach reply as plain text chunks, persisting both sides of the
 // exchange to the chat history.
 export async function action({ request }: Route.ActionArgs) {
+  const pre = preflight(request);
+  if (pre) return pre;
+  const user = await requireUser(request, { api: true });
   const { goalId, message, history, clear } = (await request.json()) as {
     goalId?: number;
     message?: string;
     history?: ChatMsg[];
     clear?: boolean;
   };
+
+  // The coach only ever operates on a goal the caller owns.
+  if (typeof goalId === "number") {
+    const goal = await getGoal(goalId, user.id);
+    if (!goal) return json({ error: "forbidden" }, 403);
+  }
 
   // Clearing chat history is a tiny non-streaming op.
   if (clear === true) {

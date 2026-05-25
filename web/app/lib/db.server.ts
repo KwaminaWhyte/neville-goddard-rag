@@ -68,6 +68,24 @@ function ensureMigrated(): Promise<void> {
         created_at TIMESTAMPTZ NOT NULL DEFAULT now()
       );
       CREATE INDEX IF NOT EXISTS idx_neville_chats_goal ON neville_chats(goal_id);
+      CREATE TABLE IF NOT EXISTS neville_users (
+        id            SERIAL PRIMARY KEY,
+        email         TEXT NOT NULL UNIQUE,
+        password_hash TEXT NOT NULL,
+        name          TEXT,
+        avatar        TEXT,
+        created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+      CREATE TABLE IF NOT EXISTS neville_sessions (
+        token      TEXT PRIMARY KEY,
+        user_id    INTEGER NOT NULL REFERENCES neville_users(id) ON DELETE CASCADE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        expires_at TIMESTAMPTZ NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_neville_sessions_user ON neville_sessions(user_id);
+      -- Data scoping: each goal belongs to a user (nullable for pre-auth rows).
+      ALTER TABLE neville_goals ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES neville_users(id) ON DELETE CASCADE;
+      CREATE INDEX IF NOT EXISTS idx_neville_goals_user ON neville_goals(user_id);
     `);
   })();
   return migrated;
@@ -110,23 +128,37 @@ export type Process = {
   created_at: string;
 };
 
-export async function listGoals(): Promise<Goal[]> {
+export async function listGoals(userId: number): Promise<Goal[]> {
   return query<Goal>(
-    "SELECT * FROM neville_goals ORDER BY (status='active') DESC, created_at DESC"
+    "SELECT * FROM neville_goals WHERE user_id = $1 ORDER BY (status='active') DESC, created_at DESC",
+    [userId]
   );
 }
 
-export async function getGoal(id: number): Promise<Goal | undefined> {
-  const r = await query<Goal>("SELECT * FROM neville_goals WHERE id = $1", [id]);
+export async function getGoal(id: number, userId: number): Promise<Goal | undefined> {
+  const r = await query<Goal>("SELECT * FROM neville_goals WHERE id = $1 AND user_id = $2", [
+    id,
+    userId,
+  ]);
   return r[0];
 }
 
-export async function createGoal(title: string, desire: string, endScene: string): Promise<Goal> {
+export async function createGoal(
+  userId: number,
+  title: string,
+  desire: string,
+  endScene: string
+): Promise<Goal> {
   const r = await query<Goal>(
-    "INSERT INTO neville_goals (title, desire, end_scene) VALUES ($1,$2,$3) RETURNING *",
-    [title, desire, endScene]
+    "INSERT INTO neville_goals (user_id, title, desire, end_scene) VALUES ($1,$2,$3,$4) RETURNING *",
+    [userId, title, desire, endScene]
   );
   return r[0];
+}
+
+// Lets the first registered account adopt any pre-auth (orphan) goals.
+export async function claimOrphanGoals(userId: number): Promise<void> {
+  await query("UPDATE neville_goals SET user_id = $1 WHERE user_id IS NULL", [userId]);
 }
 
 export async function setGoalStatus(id: number, status: string): Promise<void> {

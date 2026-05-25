@@ -14,6 +14,29 @@ import type {
 export const API_URL =
   process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, "") || "http://localhost:5173";
 
+// --- Auth token (module-level) ---
+// The auth provider hydrates this from SecureStore on launch and updates it on
+// sign in / sign out. Every request below attaches it as a Bearer header.
+let authToken: string | null = null;
+
+export function setAuthToken(t: string | null) {
+  authToken = t;
+}
+
+// Shape returned by the auth/profile endpoints. Defined in lib/auth.tsx and
+// re-imported here to keep a single source of truth.
+import type { User } from "./auth";
+export type { User };
+
+function authHeaders(extra?: HeadersInit): Record<string, string> {
+  const h: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...(extra as Record<string, string> | undefined),
+  };
+  if (authToken) h["Authorization"] = `Bearer ${authToken}`;
+  return h;
+}
+
 class ApiError extends Error {
   status: number;
   constructor(status: number, message: string) {
@@ -25,7 +48,7 @@ class ApiError extends Error {
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, {
     ...init,
-    headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
+    headers: authHeaders(init?.headers),
   });
   const text = await res.text();
   const data = text ? JSON.parse(text) : null;
@@ -101,7 +124,7 @@ export async function* streamCoach(
 ): AsyncGenerator<string> {
   const res = await fetch(`${API_URL}/api/coach`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders(),
     body: JSON.stringify({ goalId, message, history }),
   });
   if (!res.body) {
@@ -121,8 +144,39 @@ export async function* streamCoach(
 export const clearChat = (goalId: number) =>
   fetch(`${API_URL}/api/coach`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders(),
     body: JSON.stringify({ goalId, clear: true }),
+  });
+
+// --- Auth ---
+export const signup = (email: string, password: string, name?: string) =>
+  req<{ user: User; token: string }>("/api/auth/signup", {
+    method: "POST",
+    body: JSON.stringify({ email, password, ...(name ? { name } : {}) }),
+  });
+
+export const login = (email: string, password: string) =>
+  req<{ user: User; token: string }>("/api/auth/login", {
+    method: "POST",
+    body: JSON.stringify({ email, password }),
+  });
+
+export const logout = () =>
+  req<{ ok: true }>("/api/auth/logout", { method: "POST" });
+
+export const me = () => req<{ user: User }>("/api/auth/me");
+
+// --- Profile ---
+export const updateProfile = (patch: { name?: string; avatar?: string }) =>
+  req<{ user: User }>("/api/profile", {
+    method: "PATCH",
+    body: JSON.stringify(patch),
+  });
+
+export const changePassword = (current: string, next: string) =>
+  req<{ ok: true }>("/api/profile/password", {
+    method: "POST",
+    body: JSON.stringify({ current, next }),
   });
 
 export { ApiError };

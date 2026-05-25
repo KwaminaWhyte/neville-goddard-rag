@@ -1,7 +1,7 @@
 // "Live in the end" card — shows the current end-scene as italic prose, lets the
 // user regenerate it, and reveals past versions under a collapsible toggle.
 import { useState } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Image, Pressable, StyleSheet, Text, View } from "react-native";
 import { regenerateEndScene } from "../lib/api";
 import type { EndScene as EndSceneType } from "../lib/types";
 import { colors, font, space } from "../lib/theme";
@@ -38,6 +38,11 @@ export default function EndScene({
 
   return (
     <Card>
+      <Image
+        source={require("../assets/illustrations/endscene.png")}
+        style={styles.banner}
+        resizeMode="cover"
+      />
       <View style={styles.header}>
         <SectionTitle color={colors.accent}>Live in the end</SectionTitle>
         <Button
@@ -86,6 +91,14 @@ function formatTs(iso: string): string {
 }
 
 const styles = StyleSheet.create({
+  banner: {
+    width: "100%",
+    height: 120,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: colors.line,
+    marginBottom: space.md,
+  },
   header: {
     flexDirection: "row",
     justifyContent: "space-between",

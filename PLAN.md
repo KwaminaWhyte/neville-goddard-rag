@@ -121,7 +121,23 @@ Single Postgres holds BOTH LightRAG's KG/vectors AND our tracker tables (separat
       felt-state trends (dependency-free sparkline), signs timeline, streak,
       streaming coach chat (`expo/fetch`)
 - [x] Typecheck clean; Metro iOS bundle builds (1526 modules)
-- [ ] Auth + authorization — deferred until the app proves out  *(later)*
+
+### Phase 7 — Auth, profiles & generated art  ✅ done
+- [x] `auth.server.ts` — scrypt password hashing (no deps), opaque session tokens,
+      cookie (web) + Bearer (mobile) resolution, `requireUser`
+- [x] DB: `neville_users` + `neville_sessions`; `neville_goals.user_id`; goal
+      queries scoped by user; `claimOrphanGoals` (first account adopts pre-auth data)
+- [x] Web auth: `/login`, `/signup`, `/logout`, `/profile` (cookie sessions) +
+      user nav in `root.tsx`; home/goal require auth
+- [x] JSON auth API (Bearer): `/api/auth/{signup,login,logout,me}`,
+      `/api/profile`, `/api/profile/password`; all goal/coach APIs require auth
+- [x] Mobile auth: `expo-secure-store` token, `AuthProvider`/`useAuth`, route
+      guard, login/signup/profile screens, Bearer on every request
+- [x] Verified end-to-end: signup→token, 401 on bad creds/unauth, scoped goals,
+      orphan goal claimed, profile + password change, web→/login redirect
+- [x] Illustrations + app icon generated locally via **mflux (FLUX.1-schnell 4-bit
+      MLX)** — icon, adaptive foreground, hero/empty/auth + end-scene/process banners
+- [ ] Wire illustrations into in-app screens (after renders land)
 
 ## Decisions locked
 - LLM: `gemma4:26b-mlx` · Embeddings: `qwen3-embedding:4b` (DIM 2560)

@@ -24,6 +24,11 @@ const STEPS: { title: string; body: string }[] = [
 export default function Onboarding({ compact = false }: { compact?: boolean }) {
   return (
     <div className="rounded-xl border border-[var(--color-line)] bg-[var(--color-panel)] p-6">
+      <img
+        src="/illustrations/hero.png"
+        alt="Celestial illustration"
+        className="mb-5 h-40 w-full rounded-xl border border-[var(--color-line)] object-cover"
+      />
       <h3 className="serif text-lg text-[var(--color-gold)]">How it works</h3>
       <p className="mt-1 text-sm text-[var(--color-muted)]">
         Assume the feeling of the wish fulfilled — and be guided, in Neville's own teaching, until

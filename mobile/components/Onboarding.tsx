@@ -1,5 +1,5 @@
 // "How it works" primer shown on Home when the user has no desires yet.
-import { StyleSheet, Text, View } from "react-native";
+import { Image, StyleSheet, Text, View } from "react-native";
 import { colors, font, space } from "../lib/theme";
 import { Card, Muted, SectionTitle } from "./ui";
 
@@ -14,6 +14,11 @@ const STEPS = [
 export default function Onboarding() {
   return (
     <Card>
+      <Image
+        source={require("../assets/illustrations/hero.png")}
+        style={styles.hero}
+        resizeMode="cover"
+      />
       <SectionTitle>How it works</SectionTitle>
       <Text style={styles.intro}>Assume the feeling of the wish fulfilled.</Text>
 
@@ -35,6 +40,14 @@ export default function Onboarding() {
 }
 
 const styles = StyleSheet.create({
+  hero: {
+    width: "100%",
+    height: 160,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: colors.line,
+    marginBottom: space.md,
+  },
   intro: {
     color: colors.ink,
     fontFamily: font.serif,

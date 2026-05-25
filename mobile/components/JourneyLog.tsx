@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
+import { Alert, Image, Pressable, StyleSheet, Text, View } from "react-native";
 import type { Entry } from "../lib/types";
 import { ENTRY_KINDS } from "../lib/types";
 import { addEntry, deleteEntry, listEntries, updateEntry } from "../lib/api";
@@ -222,7 +222,16 @@ export default function JourneyLog({
 
       {/* List */}
       {entries.length === 0 ? (
-        <Muted>{isFiltering ? "No entries match your filter." : "No entries yet."}</Muted>
+        <View style={styles.empty}>
+          {!isFiltering && (
+            <Image
+              source={require("../assets/illustrations/empty.png")}
+              style={styles.emptyImg}
+              resizeMode="cover"
+            />
+          )}
+          <Muted>{isFiltering ? "No entries match your filter." : "No entries yet."}</Muted>
+        </View>
       ) : (
         entries.map((entry) => {
           const editing = editId === entry.id;
@@ -286,6 +295,14 @@ export default function JourneyLog({
 
 const styles = StyleSheet.create({
   section: { marginBottom: space.lg },
+  empty: { alignItems: "center", paddingVertical: space.md },
+  emptyImg: {
+    width: 120,
+    height: 120,
+    borderRadius: 14,
+    opacity: 0.9,
+    marginBottom: space.md,
+  },
   gap: { marginTop: space.sm },
   kindRow: { flexDirection: "row", flexWrap: "wrap", gap: space.sm },
   kindPill: {

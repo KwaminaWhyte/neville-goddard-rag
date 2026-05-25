@@ -1,6 +1,7 @@
 import { Form, Link, redirect, useNavigation } from "react-router";
 import type { Route } from "./+types/home";
 import { listGoals, createGoal } from "../lib/db.server";
+import { requireUser } from "../lib/auth.server";
 import { generateEndScene } from "../lib/coach.server";
 import { healthStatus } from "../lib/lightrag.server";
 import { ollamaHealth } from "../lib/ollama.server";
@@ -42,9 +43,10 @@ async function safe<T>(p: Promise<T>, fallback: T): Promise<T> {
   }
 }
 
-export async function loader() {
+export async function loader({ request }: Route.LoaderArgs) {
+  const user = await requireUser(request);
   const [goals, graph, lightrag, ollama] = await Promise.all([
-    listGoals(),
+    listGoals(user.id),
     corpusGraph(),
     safe(healthStatus(), { ok: true, detail: "" }),
     safe(ollamaHealth(), { ok: true, detail: "" }),
@@ -53,12 +55,13 @@ export async function loader() {
 }
 
 export async function action({ request }: Route.ActionArgs) {
+  const user = await requireUser(request);
   const fd = await request.formData();
   const title = String(fd.get("title") ?? "").trim();
   const desire = String(fd.get("desire") ?? "").trim();
   if (!title || !desire) return { error: "Give your wish a name and describe it." };
   const endScene = await generateEndScene(desire);
-  const goal = await createGoal(title, desire, endScene);
+  const goal = await createGoal(user.id, title, desire, endScene);
   return redirect(`/goal/${goal.id}`);
 }
 

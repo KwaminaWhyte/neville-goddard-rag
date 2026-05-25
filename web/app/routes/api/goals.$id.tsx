@@ -23,6 +23,7 @@ import {
   checkEmbeddingDrift,
 } from "../../lib/db.server";
 import { generateDailyProcess, generateEndScene } from "../../lib/coach.server";
+import { requireUser } from "../../lib/auth.server";
 import { healthStatus } from "../../lib/lightrag.server";
 import { ollamaHealth } from "../../lib/ollama.server";
 import { json, preflight } from "../../lib/api.server";
@@ -35,9 +36,10 @@ async function safe<T>(p: Promise<T>, fallback: T): Promise<T> {
   }
 }
 
-export async function loader({ params }: Route.LoaderArgs) {
+export async function loader({ request, params }: Route.LoaderArgs) {
+  const user = await requireUser(request, { api: true });
   const id = Number(params.id);
-  const goal = await getGoal(id);
+  const goal = await getGoal(id, user.id);
   if (!goal) return json({ error: "not found" }, 404);
   const day = dayNumber(goal);
   const [process, streak, endScenes, signs, trend, chats, lightrag, ollama, drift] =
@@ -68,8 +70,9 @@ export async function loader({ params }: Route.LoaderArgs) {
 export async function action({ request, params }: Route.ActionArgs) {
   const pre = preflight(request);
   if (pre) return pre;
+  const user = await requireUser(request, { api: true });
   const id = Number(params.id);
-  const goal = await getGoal(id);
+  const goal = await getGoal(id, user.id);
   if (!goal) return json({ error: "not found" }, 404);
 
   if (request.method === "DELETE") {

@@ -1,14 +1,23 @@
 import {
   isRouteErrorResponse,
+  Form,
+  Link,
   Links,
   Meta,
   Outlet,
   Scripts,
   ScrollRestoration,
+  useLoaderData,
 } from "react-router";
 
 import type { Route } from "./+types/root";
+import { getUser } from "./lib/auth.server";
 import "./app.css";
+
+export async function loader({ request }: Route.LoaderArgs) {
+  const user = await getUser(request);
+  return { user: user ?? null };
+}
 
 export const links: Route.LinksFunction = () => [
   { rel: "preconnect", href: "https://fonts.googleapis.com" },
@@ -42,7 +51,34 @@ export function Layout({ children }: { children: React.ReactNode }) {
 }
 
 export default function App() {
-  return <Outlet />;
+  const { user } = useLoaderData<typeof loader>();
+  return (
+    <>
+      {user && (
+        <nav className="border-b border-[var(--color-line)] bg-[var(--color-panel)]">
+          <div className="mx-auto flex max-w-3xl items-center justify-between px-5 py-3">
+            <Link to="/" className="serif text-lg text-[var(--color-gold)] tracking-wide">
+              The Law
+            </Link>
+            <div className="flex items-center gap-4 text-sm">
+              <Link
+                to="/profile"
+                className="text-[var(--color-muted)] transition hover:text-[var(--color-gold)]"
+              >
+                {user.name || user.email}
+              </Link>
+              <Form method="post" action="/logout">
+                <button className="text-[var(--color-muted)] transition hover:text-[var(--color-gold)]">
+                  Sign out
+                </button>
+              </Form>
+            </div>
+          </div>
+        </nav>
+      )}
+      <Outlet />
+    </>
+  );
 }
 
 export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
