@@ -1,8 +1,11 @@
-import { Form, Link, useNavigation } from "react-router";
+import { Form, Link, useNavigation, useSearchParams } from "react-router";
 import type { Route } from "./+types/goal";
 import {
   getGoal,
   listEntries,
+  searchEntries,
+  updateEntry,
+  deleteEntry,
   dayNumber,
   getProcess,
   saveProcess,
@@ -12,6 +15,8 @@ import {
   getStreak,
   listEndScenes,
   listSigns,
+  feltStateTrend,
+  listChats,
   checkEmbeddingDrift,
 } from "../lib/db.server";
 import { generateDailyProcess, generateEndScene } from "../lib/coach.server";
@@ -20,6 +25,7 @@ import { healthStatus } from "../lib/lightrag.server";
 import { ollamaHealth } from "../lib/ollama.server";
 import Markdown from "../components/Markdown";
 import CoachChat from "../components/CoachChat";
+import Trends from "../components/Trends";
 import { HealthBanner } from "./home";
 
 async function safe<T>(p: Promise<T>, fallback: T): Promise<T> {
@@ -30,18 +36,25 @@ async function safe<T>(p: Promise<T>, fallback: T): Promise<T> {
   }
 }
 
-export async function loader({ params }: Route.LoaderArgs) {
+export async function loader({ params, request }: Route.LoaderArgs) {
   const id = Number(params.id);
   const goal = await getGoal(id);
   if (!goal) throw new Response("Not found", { status: 404 });
   const day = dayNumber(goal);
-  const [entries, process, streak, endScenes, signs, lightrag, ollama, drift] =
+  const url = new URL(request.url);
+  const q = url.searchParams.get("q") || "";
+  const kind = url.searchParams.get("kind") || "";
+  const filtering = Boolean(q || kind);
+  const [entries, process, streak, endScenes, signs, trend, chats, lightrag, ollama, drift] =
     await Promise.all([
-      listEntries(id),
+      // Journey log respects the search/filter; everything else spans all entries.
+      filtering ? searchEntries(id, q, kind) : listEntries(id),
       getProcess(id, day),
       safe(getStreak(id), { current: 0, longest: 0, lastEntryDate: null }),
       safe(listEndScenes(id), []),
       safe(listSigns(id), []),
+      safe(feltStateTrend(id), []),
+      safe(listChats(id), []),
       safe(healthStatus(), { ok: true, detail: "" }),
       safe(ollamaHealth(), { ok: true, detail: "" }),
       safe(checkEmbeddingDrift(), { ok: true, message: null }),
@@ -54,6 +67,9 @@ export async function loader({ params }: Route.LoaderArgs) {
     streak,
     endScenes,
     signs,
+    trend,
+    chats: chats.map((c) => ({ role: c.role as "user" | "assistant", content: c.content })),
+    filter: { q, kind, filtering },
     health: { lightrag, ollama, drift },
   };
 }
@@ -90,6 +106,19 @@ export async function action({ request, params }: Route.ActionArgs) {
     );
     return { ok: true };
   }
+  if (intent === "entry-edit") {
+    await updateEntry(
+      id,
+      Number(fd.get("entryId")),
+      String(fd.get("content") || "").trim(),
+      String(fd.get("state") || "").trim() || null
+    );
+    return { ok: true };
+  }
+  if (intent === "entry-delete") {
+    await deleteEntry(id, Number(fd.get("entryId")));
+    return { ok: true };
+  }
   if (intent === "endscene") {
     const scene = await generateEndScene(goal.desire);
     await updateEndSceneNote(id, scene);
@@ -107,10 +136,17 @@ export async function action({ request, params }: Route.ActionArgs) {
 }
 
 export default function GoalPage({ loaderData }: Route.ComponentProps) {
-  const { goal, entries, day, process, streak, endScenes, signs, health } = loaderData;
+  const { goal, entries, day, process, streak, endScenes, signs, trend, chats, filter, health } =
+    loaderData;
+  const [, setSearchParams] = useSearchParams();
   const nav = useNavigation();
   const busy = nav.state !== "idle";
-  const generating = busy && nav.formData?.get("intent") === "process";
+  // True while THIS form's intent (and optional status value) is in flight.
+  const pending = (intent: string, status?: string) =>
+    busy &&
+    nav.formData?.get("intent") === intent &&
+    (status === undefined || nav.formData?.get("status") === status);
+  const generating = pending("process");
   // Newest end-scene is the current one shown above; the rest are past versions.
   const pastScenes = endScenes.slice(1);
 
@@ -152,8 +188,11 @@ export default function GoalPage({ loaderData }: Route.ComponentProps) {
           <h2 className="serif text-lg text-[var(--color-accent)]">Live in the end</h2>
           <Form method="post">
             <input type="hidden" name="intent" value="endscene" />
-            <button className="text-xs text-[var(--color-muted)] hover:text-[var(--color-gold)]">
-              regenerate
+            <button
+              disabled={pending("endscene")}
+              className="text-xs text-[var(--color-muted)] hover:text-[var(--color-gold)] disabled:opacity-50"
+            >
+              {pending("endscene") ? "composing…" : "regenerate"}
             </button>
           </Form>
         </div>
@@ -204,9 +243,55 @@ export default function GoalPage({ loaderData }: Route.ComponentProps) {
         )}
       </section>
 
+      {/* Felt-state trends */}
+      {trend.length > 1 && (
+        <section className="mb-8 rounded-xl border border-[var(--color-line)] bg-[var(--color-panel)] p-6">
+          <h2 className="serif text-lg mb-1 text-[var(--color-accent)]">Felt-state trends</h2>
+          <p className="mb-4 text-xs text-[var(--color-muted)]">
+            How your assumed state has moved over time — the inner weather of your journey.
+          </p>
+          <Trends points={trend} />
+        </section>
+      )}
+
       {/* Journey log */}
       <section className="mb-8 rounded-xl border border-[var(--color-line)] bg-[var(--color-panel)] p-6">
-        <h2 className="serif text-lg mb-3">Journey log</h2>
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <h2 className="serif text-lg">Journey log</h2>
+          {/* Search / filter — GET form updates the URL query, loader filters. */}
+          <Form method="get" className="flex items-center gap-2">
+            <input
+              name="q"
+              defaultValue={filter.q}
+              placeholder="search…"
+              className="w-32 rounded-lg border border-[var(--color-line)] bg-[var(--color-base)] px-2.5 py-1 text-xs outline-none focus:border-[var(--color-accent)] sm:w-40"
+            />
+            <select
+              name="kind"
+              defaultValue={filter.kind}
+              className="rounded-lg border border-[var(--color-line)] bg-[var(--color-base)] px-2 py-1 text-xs"
+            >
+              <option value="">all</option>
+              <option value="checkin">Check-in</option>
+              <option value="sats">SATS</option>
+              <option value="revision">Revision</option>
+              <option value="sign">Sign</option>
+              <option value="reflection">Reflection</option>
+            </select>
+            <button className="rounded-lg border border-[var(--color-line)] px-2.5 py-1 text-xs text-[var(--color-muted)] hover:text-[var(--color-gold)]">
+              Filter
+            </button>
+            {filter.filtering && (
+              <button
+                type="button"
+                onClick={() => setSearchParams({})}
+                className="text-xs text-[var(--color-muted)] hover:text-[var(--color-gold)]"
+              >
+                clear
+              </button>
+            )}
+          </Form>
+        </div>
         <Form method="post" className="mb-5 space-y-2">
           <input type="hidden" name="intent" value="entry" />
           <div className="flex gap-2">
@@ -233,22 +318,71 @@ export default function GoalPage({ loaderData }: Route.ComponentProps) {
             placeholder="What did you imagine, notice, or feel?"
             className="w-full rounded-lg border border-[var(--color-line)] bg-[var(--color-base)] px-3 py-2 text-sm"
           />
-          <button className="rounded-lg bg-[var(--color-accent)] px-4 py-2 text-sm font-medium text-black hover:opacity-90">
-            Log it
+          <button
+            disabled={pending("entry")}
+            className="rounded-lg bg-[var(--color-accent)] px-4 py-2 text-sm font-medium text-black hover:opacity-90 disabled:opacity-50"
+          >
+            {pending("entry") ? "Logging…" : "Log it"}
           </button>
         </Form>
         {entries.length === 0 ? (
-          <p className="text-sm text-[var(--color-muted)]">No entries yet.</p>
+          <p className="text-sm text-[var(--color-muted)]">
+            {filter.filtering ? "No entries match your filter." : "No entries yet."}
+          </p>
         ) : (
           <ul className="space-y-3">
             {entries.map((e) => (
-              <li key={e.id} className="border-l-2 border-[var(--color-line)] pl-3">
+              <li key={e.id} className="group border-l-2 border-[var(--color-line)] pl-3">
                 <div className="flex items-center gap-2 text-xs text-[var(--color-muted)]">
                   <span className="uppercase tracking-wide text-[var(--color-accent)]">{e.kind}</span>
                   {e.state && <span>· {e.state}</span>}
                   <span>· {new Date(e.created_at).toLocaleString()}</span>
+                  <span className="ml-auto flex items-center gap-2 opacity-0 transition group-hover:opacity-100">
+                    <Form
+                      method="post"
+                      onSubmit={(ev) => !confirm("Delete this entry?") && ev.preventDefault()}
+                    >
+                      <input type="hidden" name="intent" value="entry-delete" />
+                      <input type="hidden" name="entryId" value={e.id} />
+                      <button
+                        disabled={pending("entry-delete")}
+                        className="text-red-400/70 hover:text-red-400 disabled:opacity-50"
+                      >
+                        delete
+                      </button>
+                    </Form>
+                  </span>
                 </div>
                 <p className="mt-0.5 text-sm text-[#ddd8ef]">{e.content}</p>
+                {/* Edit form, revealed by the <details> toggle above (same row). */}
+                <details className="mt-1">
+                  <summary className="cursor-pointer list-none text-xs text-[var(--color-muted)] hover:text-[var(--color-gold)]">
+                    edit ↻
+                  </summary>
+                  <Form method="post" className="mt-2 space-y-2">
+                    <input type="hidden" name="intent" value="entry-edit" />
+                    <input type="hidden" name="entryId" value={e.id} />
+                    <input
+                      name="state"
+                      defaultValue={e.state ?? ""}
+                      placeholder="felt state"
+                      className="w-full rounded-lg border border-[var(--color-line)] bg-[var(--color-base)] px-3 py-1.5 text-sm"
+                    />
+                    <textarea
+                      name="content"
+                      rows={2}
+                      defaultValue={e.content}
+                      required
+                      className="w-full rounded-lg border border-[var(--color-line)] bg-[var(--color-base)] px-3 py-1.5 text-sm"
+                    />
+                    <button
+                      disabled={pending("entry-edit")}
+                      className="rounded-lg border border-[var(--color-gold-dim)] px-3 py-1 text-xs text-[var(--color-gold)] hover:bg-[var(--color-gold)]/10 disabled:opacity-50"
+                    >
+                      {pending("entry-edit") ? "Saving…" : "Save"}
+                    </button>
+                  </Form>
+                </details>
               </li>
             ))}
           </ul>
@@ -282,7 +416,7 @@ export default function GoalPage({ loaderData }: Route.ComponentProps) {
       {/* Coach chat */}
       <section className="mb-8 rounded-xl border border-[var(--color-line)] bg-[var(--color-panel)] p-6">
         <h2 className="serif text-lg mb-3 text-[var(--color-accent)]">Ask the coach</h2>
-        <CoachChat />
+        <CoachChat goalId={goal.id} initial={chats} />
       </section>
 
       {/* Status controls */}
@@ -291,8 +425,11 @@ export default function GoalPage({ loaderData }: Route.ComponentProps) {
           <Form method="post">
             <input type="hidden" name="intent" value="status" />
             <input type="hidden" name="status" value="realised" />
-            <button className="rounded-lg bg-[var(--color-gold)] px-4 py-2 text-sm font-medium text-black hover:bg-[var(--color-gold-dim)]">
-              ✦ Mark realised
+            <button
+              disabled={pending("status", "realised")}
+              className="rounded-lg bg-[var(--color-gold)] px-4 py-2 text-sm font-medium text-black hover:bg-[var(--color-gold-dim)] disabled:opacity-50"
+            >
+              {pending("status", "realised") ? "Marking…" : "✦ Mark realised"}
             </button>
           </Form>
         )}
@@ -300,15 +437,21 @@ export default function GoalPage({ loaderData }: Route.ComponentProps) {
           <Form method="post">
             <input type="hidden" name="intent" value="status" />
             <input type="hidden" name="status" value="released" />
-            <button className="rounded-lg border border-[var(--color-line)] px-4 py-2 text-sm text-[var(--color-muted)] hover:text-[var(--color-ink)]">
-              Release
+            <button
+              disabled={pending("status", "released")}
+              className="rounded-lg border border-[var(--color-line)] px-4 py-2 text-sm text-[var(--color-muted)] hover:text-[var(--color-ink)] disabled:opacity-50"
+            >
+              {pending("status", "released") ? "Releasing…" : "Release"}
             </button>
           </Form>
         )}
         <Form method="post" onSubmit={(e) => !confirm("Delete this desire and its journey?") && e.preventDefault()}>
           <input type="hidden" name="intent" value="delete" />
-          <button className="rounded-lg border border-[var(--color-line)] px-4 py-2 text-sm text-red-400/80 hover:text-red-400">
-            Delete
+          <button
+            disabled={pending("delete")}
+            className="rounded-lg border border-[var(--color-line)] px-4 py-2 text-sm text-red-400/80 hover:text-red-400 disabled:opacity-50"
+          >
+            {pending("delete") ? "Deleting…" : "Delete"}
           </button>
         </Form>
       </section>

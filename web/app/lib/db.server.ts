@@ -60,6 +60,14 @@ function ensureMigrated(): Promise<void> {
         embed_dim   INTEGER,
         recorded_at TIMESTAMPTZ DEFAULT now()
       );
+      CREATE TABLE IF NOT EXISTS neville_chats (
+        id         SERIAL PRIMARY KEY,
+        goal_id    INTEGER NOT NULL REFERENCES neville_goals(id) ON DELETE CASCADE,
+        role       TEXT NOT NULL,
+        content    TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS idx_neville_chats_goal ON neville_chats(goal_id);
     `);
   })();
   return migrated;
@@ -251,8 +259,13 @@ export async function addEntry(
 }
 
 export function dayNumber(goal: Goal): number {
-  const start = new Date(goal.created_at).getTime();
-  return Math.max(1, Math.floor((Date.now() - start) / 86400000) + 1);
+  // Calendar-day rollover: Day 2 begins at local midnight after creation,
+  // not 24h after the exact creation time.
+  const c = new Date(goal.created_at);
+  const start = new Date(c.getFullYear(), c.getMonth(), c.getDate()).getTime();
+  const n = new Date();
+  const today = new Date(n.getFullYear(), n.getMonth(), n.getDate()).getTime();
+  return Math.max(1, Math.round((today - start) / 86400000) + 1);
 }
 
 export async function getProcess(goalId: number, day: number): Promise<Process | undefined> {
@@ -274,4 +287,95 @@ export async function saveProcess(
     [goalId, day, content, JSON.stringify(sources)]
   );
   return r[0];
+}
+
+// --- Entry / sign CRUD (Phase 5: edit/delete) ---
+// Entries and signs share neville_entries (signs are kind='sign'). goalId guards
+// so a stray id can't touch another goal's row.
+export async function updateEntry(
+  goalId: number,
+  entryId: number,
+  content: string,
+  state?: string | null
+): Promise<Entry | undefined> {
+  const r = await query<Entry>(
+    "UPDATE neville_entries SET content=$1, state=COALESCE($2, state) WHERE id=$3 AND goal_id=$4 RETURNING *",
+    [content, state ?? null, entryId, goalId]
+  );
+  return r[0];
+}
+
+export async function deleteEntry(goalId: number, entryId: number): Promise<void> {
+  await query("DELETE FROM neville_entries WHERE id=$1 AND goal_id=$2", [entryId, goalId]);
+}
+
+// --- Felt-state trends (Phase 5) ---
+// One point per entry that carries a `state`, oldest→newest, for charting.
+export type TrendPoint = { date: string; state: string; kind: string };
+export async function feltStateTrend(goalId: number): Promise<TrendPoint[]> {
+  return query<TrendPoint>(
+    `SELECT to_char(created_at, 'YYYY-MM-DD"T"HH24:MI:SS') AS date, state, kind
+       FROM neville_entries
+      WHERE goal_id=$1 AND state IS NOT NULL AND state <> ''
+      ORDER BY created_at ASC`,
+    [goalId]
+  );
+}
+
+// --- Search / filter (Phase 5) ---
+// Case-insensitive substring filter over a goal's entries. kind optional.
+export async function searchEntries(
+  goalId: number,
+  q?: string,
+  kind?: string
+): Promise<Entry[]> {
+  const where = ["goal_id = $1"];
+  const params: unknown[] = [goalId];
+  if (q && q.trim()) {
+    params.push(`%${q.trim()}%`);
+    where.push(`content ILIKE $${params.length}`);
+  }
+  if (kind && kind.trim()) {
+    params.push(kind.trim());
+    where.push(`kind = $${params.length}`);
+  }
+  return query<Entry>(
+    `SELECT * FROM neville_entries WHERE ${where.join(" AND ")} ORDER BY created_at DESC`,
+    params
+  );
+}
+
+export async function searchProcesses(goalId: number, q?: string): Promise<Process[]> {
+  const where = ["goal_id = $1"];
+  const params: unknown[] = [goalId];
+  if (q && q.trim()) {
+    params.push(`%${q.trim()}%`);
+    where.push(`content ILIKE $${params.length}`);
+  }
+  return query<Process>(
+    `SELECT * FROM neville_processes WHERE ${where.join(" AND ")} ORDER BY day DESC, created_at DESC`,
+    params
+  );
+}
+
+// --- Coach chat history persistence (Phase 5) ---
+export type Chat = { id: number; goal_id: number; role: string; content: string; created_at: string };
+
+export async function listChats(goalId: number): Promise<Chat[]> {
+  return query<Chat>(
+    "SELECT * FROM neville_chats WHERE goal_id=$1 ORDER BY created_at ASC, id ASC",
+    [goalId]
+  );
+}
+
+export async function addChat(goalId: number, role: string, content: string): Promise<Chat> {
+  const r = await query<Chat>(
+    "INSERT INTO neville_chats (goal_id, role, content) VALUES ($1,$2,$3) RETURNING *",
+    [goalId, role, content]
+  );
+  return r[0];
+}
+
+export async function clearChats(goalId: number): Promise<void> {
+  await query("DELETE FROM neville_chats WHERE goal_id=$1", [goalId]);
 }

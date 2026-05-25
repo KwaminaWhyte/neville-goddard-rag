@@ -16,10 +16,20 @@ corpus/*.pdf
 # Node
 node_modules/
 web/node_modules/
+mobile/node_modules/
 
 # React Router build artifacts
 web/.react-router/
 web/build/
+
+# Expo mobile app
+mobile/.expo/
+mobile/dist/
+mobile/.env
+mobile/web-build/
+mobile/ios/
+mobile/android/
+*.hbc
 
 # Agent scratch
 .claude/scheduled_tasks.lock

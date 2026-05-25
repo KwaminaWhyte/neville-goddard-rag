@@ -4,6 +4,7 @@ import { listGoals, createGoal } from "../lib/db.server";
 import { generateEndScene } from "../lib/coach.server";
 import { healthStatus } from "../lib/lightrag.server";
 import { ollamaHealth } from "../lib/ollama.server";
+import Onboarding from "../components/Onboarding";
 
 export function meta(_: Route.MetaArgs) {
   return [
@@ -142,7 +143,7 @@ export default function Home({ loaderData, actionData }: Route.ComponentProps) {
       <section>
         <h2 className="serif text-xl mb-4 text-[var(--color-muted)]">Your desires</h2>
         {goals.length === 0 ? (
-          <p className="text-[var(--color-muted)]">Nothing yet. Name your first above.</p>
+          <Onboarding />
         ) : (
           <ul className="space-y-3">
             {goals.map((g) => (

@@ -3,8 +3,8 @@ import Markdown from "./Markdown";
 
 type Msg = { role: "user" | "assistant"; content: string };
 
-export default function CoachChat() {
-  const [msgs, setMsgs] = useState<Msg[]>([]);
+export default function CoachChat({ goalId, initial = [] }: { goalId: number; initial?: Msg[] }) {
+  const [msgs, setMsgs] = useState<Msg[]>(initial);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -22,7 +22,7 @@ export default function CoachChat() {
       const res = await fetch("/api/coach", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text, history }),
+        body: JSON.stringify({ goalId, message: text, history }),
       });
       if (!res.body) throw new Error("no stream");
       const reader = res.body.getReader();
@@ -50,8 +50,33 @@ export default function CoachChat() {
     }
   }
 
+  async function clearChat() {
+    if (busy) return;
+    try {
+      await fetch("/api/coach", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ goalId, clear: true }),
+      });
+    } catch {
+      // best-effort; still clear locally
+    }
+    setMsgs([]);
+  }
+
   return (
     <div>
+      {msgs.length > 0 && (
+        <div className="mb-1 flex justify-end">
+          <button
+            type="button"
+            onClick={clearChat}
+            className="text-xs text-[var(--color-muted)] hover:text-[var(--color-gold)]"
+          >
+            Clear chat
+          </button>
+        </div>
+      )}
       {msgs.length > 0 && (
         <div ref={scrollRef} className="mb-3 max-h-96 space-y-4 overflow-y-auto pr-1">
           {msgs.map((m, i) =>
