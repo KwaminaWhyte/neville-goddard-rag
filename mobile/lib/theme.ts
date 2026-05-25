@@ -17,8 +17,17 @@ export const radius = { sm: 8, md: 12, lg: 16, xl: 20, pill: 999 } as const;
 export const space = { xs: 4, sm: 8, md: 12, lg: 16, xl: 24, xxl: 32 } as const;
 
 export const font = {
-  // The app uses a serif for headings; system serif keeps the bundle light.
-  serif: "serif" as const,
+  // Headings render in heavy Space Grotesk; the `serif` key is kept so existing
+  // heading usages pick up the display face automatically.
+  serif: "SpaceGrotesk_700Bold" as const,
+  // Explicit font-family tokens — Space Grotesk for display, Inter for body.
+  family: {
+    display: "SpaceGrotesk_700Bold",
+    displayMedium: "SpaceGrotesk_500Medium",
+    body: "Inter_400Regular",
+    bodyMedium: "Inter_500Medium",
+    bodySemibold: "Inter_600SemiBold",
+  },
   sizes: { xs: 11, sm: 13, md: 15, lg: 18, xl: 24, xxl: 30 },
 };
 

@@ -12,6 +12,8 @@ import {
 
 import type { Route } from "./+types/root";
 import { getUser } from "./lib/auth.server";
+import "@fontsource-variable/inter";
+import "@fontsource-variable/space-grotesk";
 import "./app.css";
 
 export async function loader({ request }: Route.LoaderArgs) {

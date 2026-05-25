@@ -137,7 +137,8 @@ Single Postgres holds BOTH LightRAG's KG/vectors AND our tracker tables (separat
       orphan goal claimed, profile + password change, web→/login redirect
 - [x] Illustrations + app icon generated locally via **mflux (FLUX.1-schnell 4-bit
       MLX)** — icon, adaptive foreground, hero/empty/auth + end-scene/process banners
-- [ ] Wire illustrations into in-app screens (after renders land)
+- [x] Illustrations wired into web + mobile (onboarding, auth screens, goal
+      sections, journey-log empty state); mirrored to web/public
 
 ## Decisions locked
 - LLM: `gemma4:26b-mlx` · Embeddings: `qwen3-embedding:4b` (DIM 2560)

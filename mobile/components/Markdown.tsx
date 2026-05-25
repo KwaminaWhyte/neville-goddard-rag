@@ -186,9 +186,9 @@ function Inline({ text }: { text: string }): ReactNode {
 }
 
 const styles = StyleSheet.create({
-  h: { color: colors.gold, fontFamily: font.serif, fontWeight: "700" },
-  p: { color: colors.ink, fontSize: font.sizes.sm, lineHeight: 22 },
-  bold: { fontWeight: "700", color: colors.ink },
+  h: { color: colors.gold, fontFamily: font.serif },
+  p: { color: colors.ink, fontSize: font.sizes.sm, lineHeight: 22, fontFamily: font.family.body },
+  bold: { fontFamily: font.family.bodySemibold, color: colors.ink },
   italic: { fontStyle: "italic" },
   code: {
     fontFamily: "monospace",
@@ -198,9 +198,9 @@ const styles = StyleSheet.create({
   },
   link: { color: colors.gold, textDecorationLine: "underline" },
   quote: { borderLeftWidth: 2, borderLeftColor: colors.gold, paddingLeft: space.md },
-  quoteText: { color: colors.muted, fontStyle: "italic", fontSize: font.sizes.sm, lineHeight: 22 },
+  quoteText: { color: colors.muted, fontStyle: "italic", fontSize: font.sizes.sm, lineHeight: 22, fontFamily: font.family.body },
   hr: { height: 1, backgroundColor: colors.line, marginVertical: space.md },
   li: { flexDirection: "row", marginBottom: space.xs, paddingRight: space.md },
-  bullet: { color: colors.accent, width: 22, fontSize: font.sizes.sm },
-  liText: { color: colors.ink, fontSize: font.sizes.sm, lineHeight: 22, flex: 1 },
+  bullet: { color: colors.accent, width: 22, fontSize: font.sizes.sm, fontFamily: font.family.body },
+  liText: { color: colors.ink, fontSize: font.sizes.sm, lineHeight: 22, flex: 1, fontFamily: font.family.body },
 });

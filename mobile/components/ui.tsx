@@ -34,7 +34,7 @@ export function Muted({ children, style }: { children: ReactNode; style?: object
 export function Pill({ children, color = colors.muted }: { children: ReactNode; color?: string }) {
   return (
     <View style={[styles.pill, { borderColor: color }]}>
-      <Text style={{ color, fontSize: font.sizes.xs }}>{children}</Text>
+      <Text style={{ color, fontSize: font.sizes.xs, fontFamily: font.family.body }}>{children}</Text>
     </View>
   );
 }
@@ -72,7 +72,7 @@ export function Button({
       {loading ? (
         <ActivityIndicator size="small" color={v.fg} />
       ) : (
-        <Text style={{ color: v.fg, fontSize: small ? font.sizes.xs : font.sizes.sm, fontWeight: "600" }}>
+        <Text style={{ color: v.fg, fontSize: small ? font.sizes.xs : font.sizes.sm, fontFamily: font.family.bodySemibold }}>
           {title}
         </Text>
       )}
@@ -107,7 +107,7 @@ const styles = StyleSheet.create({
     marginBottom: space.xl,
   },
   sectionTitle: { fontFamily: font.serif, fontSize: font.sizes.lg, marginBottom: space.sm },
-  muted: { color: colors.muted, fontSize: font.sizes.sm },
+  muted: { color: colors.muted, fontSize: font.sizes.sm, fontFamily: font.family.body },
   pill: {
     borderWidth: 1,
     borderRadius: radius.pill,
@@ -133,5 +133,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: space.md,
     paddingVertical: 10,
     fontSize: font.sizes.sm,
+    fontFamily: font.family.body,
   },
 });
