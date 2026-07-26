@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+# A second push to the same branch makes the first run's answer irrelevant.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  web:
+    name: web (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # README promises Node 20+; @types/node is pinned to ^22, so both are
+        # supported surface and both get exercised.
+        node: ["20", "22"]
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      # Hermetic by design: the unit tests import the *.server modules but never
+      # reach Postgres, Ollama or LightRAG (dotenv no-ops without .env, and
+      # pg.Pool connects lazily), so no services are started here.
+      - name: Test
+        run: npm test
+
+  infra:
+    name: infra
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # docker-compose.yml declares `env_file: ./lightrag.env`, which setup.sh
+      # generates and .gitignore excludes — without it `compose config` fails on
+      # a fresh clone. The tracked .example templates hold no secrets, so they
+      # are the right stand-in.
+      - name: Materialise env files from the tracked examples
+        run: |
+          cp .env.example .env
+          cp lightrag.env.example lightrag.env
+
+      # Catches interpolation typos, bad indentation and unresolved variables in
+      # the compose file. Resolves only — it never pulls images or starts a
+      # container.
+      - name: Validate docker compose config
+        run: docker compose config -q
+
+      # setup.sh is the entry point for every new clone, and a syntax error in it
+      # is only discovered by the person it breaks. Parse-only, nothing executes.
+      - name: Shell syntax check
+        run: |
+          for f in setup.sh scripts/*.sh; do
+            echo "bash -n $f"
+            bash -n "$f"
+          done

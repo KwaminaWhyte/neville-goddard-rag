@@ -6,15 +6,49 @@ import {
   type LoaderFunctionArgs,
   type ActionFunctionArgs,
 } from "react-router";
-import { requireUser, updateProfile, changePassword } from "../lib/auth.server";
+import {
+  requireUser,
+  updateProfile,
+  changePassword,
+  tokenFromRequest,
+} from "../lib/auth.server";
+import { DEFAULT_TZ, isValidTimezone, setUserTimezone } from "../lib/db.server";
 
 export function meta() {
   return [{ title: "Your profile — The Law" }];
 }
 
+// The zone list comes from the server: Node has the full ICU list, and building
+// it here means the <select> works without client JS. Older runtimes without
+// supportedValuesOf fall back to a short list plus whatever the user already has.
+const FALLBACK_ZONES = [
+  "UTC",
+  "Africa/Accra",
+  "America/Chicago",
+  "America/Los_Angeles",
+  "America/New_York",
+  "Asia/Kolkata",
+  "Asia/Tokyo",
+  "Australia/Sydney",
+  "Europe/Berlin",
+  "Europe/London",
+];
+
+function zoneOptions(current: string): string[] {
+  let zones: string[] = [];
+  try {
+    if (typeof Intl.supportedValuesOf === "function") zones = Intl.supportedValuesOf("timeZone");
+  } catch {
+    zones = [];
+  }
+  if (!zones.length) zones = FALLBACK_ZONES;
+  const withCurrent = zones.includes(current) ? zones : [current, ...zones];
+  return withCurrent.includes(DEFAULT_TZ) ? withCurrent : [DEFAULT_TZ, ...withCurrent];
+}
+
 export async function loader({ request }: LoaderFunctionArgs) {
   const user = await requireUser(request);
-  return { user };
+  return { user, zones: zoneOptions(user.timezone || DEFAULT_TZ) };
 }
 
 export async function action({ request }: ActionFunctionArgs) {
@@ -25,6 +59,12 @@ export async function action({ request }: ActionFunctionArgs) {
   if (intent === "profile") {
     const name = String(fd.get("name") ?? "").trim();
     const avatar = String(fd.get("avatar") ?? "").trim();
+    const timezone = String(fd.get("timezone") ?? "").trim();
+    // Validate before writing: the day counter and the streak both bucket days
+    // in this zone, so a junk value would quietly corrupt both.
+    if (timezone && !isValidTimezone(timezone))
+      return { ok: false, scope: "profile", error: `"${timezone}" is not a valid time zone.` };
+    if (timezone) await setUserTimezone(user.id, timezone);
     await updateProfile(user.id, { name: name || null, avatar: avatar || null });
     return { ok: true, scope: "profile", message: "Profile saved." };
   }
@@ -37,7 +77,9 @@ export async function action({ request }: ActionFunctionArgs) {
       return { ok: false, scope: "password", error: "New password must be at least 8 characters." };
     if (next !== confirm)
       return { ok: false, scope: "password", error: "New passwords do not match." };
-    const res = await changePassword(user.id, current, next);
+    // Pass our own token so every *other* session is revoked but this browser
+    // stays signed in.
+    const res = await changePassword(user.id, current, next, tokenFromRequest(request) ?? undefined);
     if (!res.ok) return { ok: false, scope: "password", error: res.error };
     return { ok: true, scope: "password", message: "Password changed." };
   }
@@ -55,7 +97,7 @@ type ActionResult =
   | undefined;
 
 export default function Profile() {
-  const { user } = useLoaderData<typeof loader>();
+  const { user, zones } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>() as ActionResult;
   const nav = useNavigation();
   const intent = nav.formData?.get("intent");
@@ -99,6 +141,23 @@ export default function Profile() {
               placeholder="https://…"
               className={field}
             />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs text-[var(--color-muted)]">Time zone</label>
+            <select
+              name="timezone"
+              defaultValue={user.timezone || "UTC"}
+              className={field}
+            >
+              {zones.map((z) => (
+                <option key={z} value={z}>
+                  {z}
+                </option>
+              ))}
+            </select>
+            <p className="mt-1 text-xs text-[var(--color-muted)]">
+              Your day counter and streak roll over at midnight in this zone.
+            </p>
           </div>
           {actionData?.scope === "profile" && actionData.ok && (
             <p className="text-sm text-[var(--color-accent)]">{actionData.message}</p>

@@ -1,6 +1,8 @@
 // Coach engine: LightRAG-grounded, Neville-voiced generation.
 import { chat, chatStream, type ChatMsg } from "./ollama.server";
 import { retrieve } from "./lightrag.server";
+import { relevantEntries, relevantHistoryForProcess } from "./journal.server";
+import type { SemanticEntry } from "./db.server";
 
 const PERSONA = `You are a manifestation coach trained exclusively on the lectures and books of Neville Goddard.
 You teach his Law: imagination creates reality; assume the feeling of the wish fulfilled; live in the end; "I AM" is the only reality; revise the day; persist in the assumption until it hardens into fact.
@@ -17,6 +19,23 @@ const CHAT_FORMAT = `Reply in clean, well-structured GitHub-flavored markdown:
 - Use bullet or numbered lists for any steps.
 - Put direct Neville quotations in a \`>\` blockquote.`;
 
+// The journal is a second, categorically different kind of grounding: it is
+// evidence about the *user*, never doctrine. The persona forbids inventing
+// doctrine and forbids answering from anything but the Neville context — so the
+// journal block has to be fenced off explicitly, or the coach starts quoting the
+// user's diary back as if Neville had written it.
+const JOURNAL_RULES = `The MY JOURNAL section is my own private log — my words about my own days, not Neville's teaching. Use it only to know where I actually am: name the pattern back to me ("you met this same resistance on day 3"). NEVER quote it as Neville, never cite it as a source, and never treat anything in it as doctrine. All teaching still comes from the NEVILLE CONTEXT only.`;
+
+// Compact, dated lines. Dates matter — "day 3" style callbacks are the point.
+function journalBlock(entries: SemanticEntry[]): string {
+  return entries
+    .map((e) => {
+      const when = e.created_at ? new Date(e.created_at).toISOString().slice(0, 10) : "undated";
+      return `- ${when} (${e.kind}${e.state ? `, felt: ${e.state}` : ""}) ${e.content}`;
+    })
+    .join("\n");
+}
+
 // "Living in the end" scene: first person, present tense, sensory, implies wish fulfilled.
 export async function generateEndScene(desire: string): Promise<string> {
   const { text: ctx } = await retrieve(
@@ -32,11 +51,15 @@ export async function generateEndScene(desire: string): Promise<string> {
   return chat(messages, { temperature: 0.85 });
 }
 
+// `goalId` (+ `recentIds`) is optional and additive: without it this behaves
+// exactly as before, on the recent slice alone.
 export async function generateDailyProcess(args: {
   desire: string;
   endScene?: string | null;
   day: number;
   recent: { kind: string; content: string; state?: string | null }[];
+  goalId?: number;
+  recentIds?: number[];
 }): Promise<{ content: string; sources: string[] }> {
   const { text: ctx, sources } = await retrieve(
     `daily practice technique SATS revision persistence mental diet for: ${args.desire}`
@@ -46,6 +69,18 @@ export async function generateDailyProcess(args: {
         .map((e) => `- (${e.kind}${e.state ? `, felt: ${e.state}` : ""}) ${e.content}`)
         .join("\n")
     : "No entries yet — this is the start of the journey.";
+  // Recency and relevance are different signals: the newest five entries say
+  // where the user is now, the semantic hits say what this moment resembles in
+  // the whole journey. Both, separately labelled.
+  const relevant =
+    args.goalId != null
+      ? await relevantHistoryForProcess({
+          goalId: args.goalId,
+          desire: args.desire,
+          recentIds: args.recentIds,
+          latestContent: args.recent[0]?.content,
+        })
+      : [];
   const messages: ChatMsg[] = [
     { role: "system", content: PERSONA },
     {
@@ -53,9 +88,14 @@ export async function generateDailyProcess(args: {
       content: `NEVILLE CONTEXT:\n${ctx}\n\nMy desire: "${args.desire}"
 ${args.endScene ? `My end-scene: "${args.endScene}"` : ""}
 This is Day ${args.day} of my journey.
-My recent log:
-${recentBlock}
 
+MY JOURNAL — most recent entries (where I am right now):
+${recentBlock}
+${
+  relevant.length
+    ? `\nMY JOURNAL — earlier moments that echo today (found by meaning, not by date):\n${journalBlock(relevant)}\n\n${JOURNAL_RULES}\nWhere it is true, connect today's practice to one of these earlier moments by name and date — remind me what I already lived through.\n`
+    : `\n${JOURNAL_RULES}\n`
+}
 Give me TODAY'S process as markdown with these exact headers:
 ## Today's State to Assume
 One vivid present-tense sentence — the feeling I carry all day.
@@ -79,22 +119,36 @@ Keep it tight, vivid, personal to my desire. No fluff.`,
   return { content, sources: titles.length ? titles : ["Neville Goddard corpus"] };
 }
 
+// `history` must come from the server-side transcript, never from the client —
+// a forged `assistant` turn would otherwise override the persona.
+// `opts.goalId` opts the answer into the user's own journal as extra grounding;
+// omitted, the coach is corpus-only exactly as before.
 export async function* coachChatStream(
   userMsg: string,
-  history: ChatMsg[]
+  history: ChatMsg[],
+  opts?: { signal?: AbortSignal; goalId?: number }
 ): AsyncGenerator<string> {
-  const { text: ctx, sources } = await retrieve(userMsg);
+  // Corpus and journal are independent lookups — run them together.
+  const [{ text: ctx, sources }, journal] = await Promise.all([
+    retrieve(userMsg),
+    opts?.goalId != null ? relevantEntries(opts.goalId, userMsg, { limit: 4 }) : Promise.resolve([]),
+  ]);
   const titles = [...new Set(sources.map((s) => s.title).filter(Boolean))];
   const footer = titles.length
     ? `\n\nEND your reply with a single footer line listing the book titles you drew from: \`**Sources:** ${titles.join(" · ")}\`.`
     : "\n\nDo NOT add a Sources footer.";
+  // Journal entries are never listed in the Sources footer — that footer is for
+  // books, and the user's own log is not a citable source.
+  const journalSection = journal.length
+    ? `\n\nMY JOURNAL — my own past entries closest in meaning to this question:\n${journalBlock(journal)}\n\n${JOURNAL_RULES}\nDo NOT list my journal in the Sources footer.`
+    : "";
   const messages: ChatMsg[] = [
     { role: "system", content: `${PERSONA}\n\n${CHAT_FORMAT}` },
     ...history,
     {
       role: "user",
-      content: `NEVILLE CONTEXT:\n${ctx}\n\nReference titles: ${titles.length ? titles.join(", ") : "none"}\n\nMy question: ${userMsg}${footer}`,
+      content: `NEVILLE CONTEXT:\n${ctx}\n\nReference titles: ${titles.length ? titles.join(", ") : "none"}${journalSection}\n\nMy question: ${userMsg}${footer}`,
     },
   ];
-  yield* chatStream(messages, { temperature: 0.8 });
+  yield* chatStream(messages, { temperature: 0.8, signal: opts?.signal });
 }

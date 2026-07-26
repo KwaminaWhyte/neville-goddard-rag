@@ -5,6 +5,7 @@ import { requireUser } from "../lib/auth.server";
 import { generateEndScene } from "../lib/coach.server";
 import { healthStatus } from "../lib/lightrag.server";
 import { ollamaHealth } from "../lib/ollama.server";
+import { log } from "../lib/logger.server";
 import Onboarding from "../components/Onboarding";
 
 export function meta(_: Route.MetaArgs) {
@@ -29,16 +30,19 @@ async function corpusGraph() {
         processed: c.PROCESSED ?? 0,
       };
     }
-  } catch {
-    /* ignore */
+  } catch (e) {
+    log.warn("home", "corpus graph status unavailable", { error: (e as Error).message });
   }
   return graph;
 }
 
+// Shared best-effort wrapper for optional page data (health checks, streaks,
+// chats): never fail the page, but never lose the failure either.
 async function safe<T>(p: Promise<T>, fallback: T): Promise<T> {
   try {
     return await p;
-  } catch {
+  } catch (e) {
+    log.warn("home", "optional loader data unavailable", { error: (e as Error).message });
     return fallback;
   }
 }

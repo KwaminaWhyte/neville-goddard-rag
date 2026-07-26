@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import {
   Form,
   Link,
@@ -13,6 +14,7 @@ import {
   createSession,
   sessionCookie,
 } from "../lib/auth.server";
+import { log } from "../lib/logger.server";
 
 export function meta() {
   return [{ title: "Create account — The Law" }];
@@ -29,15 +31,19 @@ export async function action({ request }: ActionFunctionArgs) {
   const email = String(fd.get("email") ?? "").trim();
   const password = String(fd.get("password") ?? "");
   const name = String(fd.get("name") ?? "").trim();
+  // Best-effort initial zone from the browser (hidden field, no round trip).
+  // createUser validates it and falls back to DEFAULT_TZ — never trusted as-is.
+  const timezone = String(fd.get("timezone") ?? "").trim();
 
   if (!email || !/.+@.+\..+/.test(email)) return { error: "Enter a valid email address." };
   if (password.length < 8) return { error: "Password must be at least 8 characters." };
 
   let user;
   try {
-    user = await createUser(email, password, name || undefined);
+    user = await createUser(email, password, name || undefined, timezone || undefined);
   } catch (err: any) {
     if (err?.code === "23505") return { error: "That email is already registered." };
+    log.error("signup", "createUser failed", { error: err?.message ?? String(err) });
     return { error: "Could not create your account. Please try again." };
   }
 
@@ -52,6 +58,17 @@ export default function Signup() {
   const actionData = useActionData<typeof action>();
   const nav = useNavigation();
   const pending = nav.state !== "idle";
+  // Filled after hydration rather than at render: on the server this would
+  // resolve to the *server's* zone and mismatch on hydration.
+  const tzRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    try {
+      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      if (tz && tzRef.current) tzRef.current.value = tz;
+    } catch {
+      // No Intl data — the server falls back to UTC and /profile can fix it.
+    }
+  }, []);
 
   return (
     <main className="mx-auto flex min-h-screen max-w-md flex-col justify-center px-5 py-12">
@@ -66,6 +83,7 @@ export default function Signup() {
           Name a desire and be guided until it is realised.
         </p>
         <Form method="post" className="mt-6 space-y-3">
+          <input ref={tzRef} type="hidden" name="timezone" />
           <input
             name="name"
             type="text"

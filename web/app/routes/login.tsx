@@ -10,16 +10,21 @@ import {
 import {
   getUser,
   getUserByEmail,
-  verifyPassword,
+  verifyAndUpgrade,
   createSession,
   sessionCookie,
+  clientIp,
+  retryAfterMessage,
 } from "../lib/auth.server";
+import { loginBackoff, recordLoginAttempt, clearLoginAttempts } from "../lib/db.server";
+import { bestEffort, log } from "../lib/logger.server";
 
 export function meta() {
   return [{ title: "Sign in — The Law" }];
 }
 
-function safeNext(raw: string | null): string {
+// Exported for tests: this is the open-redirect guard on ?next=.
+export function safeNext(raw: string | null): string {
   if (!raw || !raw.startsWith("/") || raw.startsWith("//")) return "/";
   return raw;
 }
@@ -39,11 +44,28 @@ export async function action({ request }: ActionFunctionArgs) {
 
   if (!email || !password) return { error: "Invalid email or password." };
 
-  const user = await getUserByEmail(email);
-  if (!user || !(await verifyPassword(password, user.password_hash))) {
-    return { error: "Invalid email or password." };
+  // Throttle before touching the password: an unlimited-attempt form is a free
+  // offline-speed oracle. Checked per-email OR per-IP, whichever is worse.
+  const ip = clientIp(request);
+  const gate = await loginBackoff(email, ip);
+  if (gate.blocked) {
+    log.warn("auth", "login blocked by backoff", {
+      email,
+      ip,
+      failures: gate.failures,
+      retryAfterSec: gate.retryAfterSec,
+    });
+    return { error: retryAfterMessage(gate.retryAfterSec) };
   }
 
+  const user = await getUserByEmail(email);
+  // verifyAndUpgrade rehashes a legacy/low-cost hash in passing. The message
+  // stays identical for "no such user" and "wrong password" — no enumeration.
+  const ok = user ? await verifyAndUpgrade(user, password) : false;
+  await bestEffort("auth", "record login attempt", recordLoginAttempt(email, ip, ok), undefined);
+  if (!user || !ok) return { error: "Invalid email or password." };
+
+  await bestEffort("auth", "clear login attempts", clearLoginAttempts(email, ip), undefined);
   const token = await createSession(user.id);
   throw redirect(next, { headers: { "Set-Cookie": sessionCookie(token) } });
 }

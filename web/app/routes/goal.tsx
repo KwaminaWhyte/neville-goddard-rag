@@ -18,21 +18,33 @@ import {
   feltStateTrend,
   listChats,
   checkEmbeddingDrift,
+  getUserTimezone,
 } from "../lib/db.server";
 import { generateDailyProcess, generateEndScene } from "../lib/coach.server";
+import {
+  ensureIndexed,
+  indexEntry,
+  journalSearchStatus,
+  reindexEntry,
+  searchJournalSemantic,
+} from "../lib/journal.server";
 import { requireUser } from "../lib/auth.server";
 import { updateEndSceneNote } from "../lib/db.server";
 import { healthStatus } from "../lib/lightrag.server";
 import { ollamaHealth } from "../lib/ollama.server";
+import { log } from "../lib/logger.server";
 import Markdown from "../components/Markdown";
 import CoachChat from "../components/CoachChat";
 import Trends from "../components/Trends";
 import { HealthBanner } from "./home";
 
+// Best-effort wrapper for optional page data (health checks, streaks, chats):
+// never fail the page, but never lose the failure either.
 async function safe<T>(p: Promise<T>, fallback: T): Promise<T> {
   try {
     return await p;
-  } catch {
+  } catch (e) {
+    log.warn("goal", "optional loader data unavailable", { error: (e as Error).message });
     return fallback;
   }
 }
@@ -42,28 +54,52 @@ export async function loader({ params, request }: Route.LoaderArgs) {
   const id = Number(params.id);
   const goal = await getGoal(id, user.id);
   if (!goal) throw new Response("Not found", { status: 404 });
-  const day = dayNumber(goal);
+  // Day counter and streak must bucket calendar days in the same zone.
+  const tz = await getUserTimezone(user.id);
+  const day = dayNumber(goal, tz);
   const url = new URL(request.url);
   const q = url.searchParams.get("q") || "";
   const kind = url.searchParams.get("kind") || "";
+  // mode=meaning ranks the log by semantic similarity; anything else keeps the
+  // original ILIKE substring behaviour.
+  const mode = url.searchParams.get("mode") === "meaning" ? "meaning" : "text";
   const filtering = Boolean(q || kind);
-  const [entries, process, streak, endScenes, signs, trend, chats, lightrag, ollama, drift] =
-    await Promise.all([
-      // Journey log respects the search/filter; everything else spans all entries.
-      filtering ? searchEntries(id, q, kind) : listEntries(id),
-      getProcess(id, day),
-      safe(getStreak(id), { current: 0, longest: 0, lastEntryDate: null }),
-      safe(listEndScenes(id), []),
-      safe(listSigns(id), []),
-      safe(feltStateTrend(id), []),
-      safe(listChats(id), []),
-      safe(healthStatus(), { ok: true, detail: "" }),
-      safe(ollamaHealth(), { ok: true, detail: "" }),
-      safe(checkEmbeddingDrift(), { ok: true, message: null }),
-    ]);
+
+  // Opportunistic, bounded, throttled backfill for entries predating this
+  // feature. Fire-and-forget: the page must not wait on a local embedder, and
+  // the search path below joins this same sweep instead of duplicating it. It
+  // no-ops when the feature is unavailable.
+  void ensureIndexed(id);
+
+  const [
+    journeyEntries,
+    journal,
+    process,
+    streak,
+    endScenes,
+    signs,
+    trend,
+    chats,
+    lightrag,
+    ollama,
+    drift,
+  ] = await Promise.all([
+    // Journey log respects the search/filter; everything else spans all entries.
+    journeyLog(id, { q, kind, semantic: mode === "meaning", filtering }),
+    safe(journalSearchStatus(), { available: false, reason: null as string | null, model: "" }),
+    getProcess(id, day),
+    safe(getStreak(id, tz), { current: 0, longest: 0, lastEntryDate: null }),
+    safe(listEndScenes(id), []),
+    safe(listSigns(id), []),
+    safe(feltStateTrend(id), []),
+    safe(listChats(id), []),
+    safe(healthStatus(), { ok: true, detail: "" }),
+    safe(ollamaHealth(), { ok: true, detail: "" }),
+    safe(checkEmbeddingDrift(), { ok: true, message: null }),
+  ]);
   return {
     goal,
-    entries,
+    entries: journeyEntries.entries,
     day,
     process,
     streak,
@@ -71,9 +107,49 @@ export async function loader({ params, request }: Route.LoaderArgs) {
     signs,
     trend,
     chats: chats.map((c) => ({ role: c.role as "user" | "assistant", content: c.content })),
-    filter: { q, kind, filtering },
+    filter: { q, kind, filtering, mode, semantic: journeyEntries.semantic },
+    journal,
     health: { lightrag, ollama, drift },
   };
+}
+
+// One shape for the journey log whichever way it was fetched, so the component
+// doesn't branch on a union. `distance` is cosine distance, present only for
+// semantic hits.
+type LogEntry = {
+  id: number;
+  goal_id: number;
+  kind: string;
+  content: string;
+  state: string | null;
+  created_at: string;
+  distance: number | null;
+};
+
+async function journeyLog(
+  id: number,
+  opts: { q: string; kind: string; semantic: boolean; filtering: boolean }
+): Promise<{ entries: LogEntry[]; semantic: boolean }> {
+  // Semantic mode needs something to rank against; a kind-only filter is still
+  // just a filter.
+  if (opts.semantic && opts.q.trim()) {
+    const res = await safe(searchJournalSemantic(id, opts.q, { kind: opts.kind, limit: 40 }), {
+      available: false,
+      entries: [],
+    });
+    // Zero hits means nothing is embedded yet (or the embedder is down), not
+    // "no such moment" — fall through to substring rather than show an empty log.
+    if (res.available && res.entries.length) {
+      return {
+        entries: res.entries.map((e) => ({ ...e, distance: Number(e.distance) })),
+        semantic: true,
+      };
+    }
+  }
+  const rows = opts.filtering
+    ? await searchEntries(id, opts.q, opts.kind)
+    : await listEntries(id);
+  return { entries: rows.map((e) => ({ ...e, distance: null })), semantic: false };
 }
 
 export async function action({ request, params }: Route.ActionArgs) {
@@ -85,8 +161,9 @@ export async function action({ request, params }: Route.ActionArgs) {
   if (!goal) throw new Response("Not found", { status: 404 });
 
   if (intent === "process") {
-    const day = dayNumber(goal);
-    const recent = (await listEntries(id)).slice(0, 5).map((e) => ({
+    const day = dayNumber(goal, await getUserTimezone(user.id));
+    const recentRows = (await listEntries(id)).slice(0, 5);
+    const recent = recentRows.map((e) => ({
       kind: e.kind,
       content: e.content,
       state: e.state,
@@ -96,29 +173,41 @@ export async function action({ request, params }: Route.ActionArgs) {
       endScene: goal.end_scene,
       day,
       recent,
+      // Lets the coach also pull semantically relevant older entries, minus the
+      // ones already shown above.
+      goalId: id,
+      recentIds: recentRows.map((e) => e.id),
     });
     await saveProcess(id, day, content, sources);
     return { ok: true };
   }
   if (intent === "entry") {
-    await addEntry(
+    const entry = await addEntry(
       id,
       String(fd.get("kind") || "checkin"),
       String(fd.get("content") || "").trim(),
       String(fd.get("state") || "").trim() || undefined
     );
+    // Not awaited: logging your day must return immediately and must never fail
+    // because the embedder is cold or Ollama is down. indexEntry never throws,
+    // and anything it misses is picked up by the next backfill sweep.
+    void indexEntry(entry);
     return { ok: true };
   }
   if (intent === "entry-edit") {
-    await updateEntry(
+    const updated = await updateEntry(
       id,
       Number(fd.get("entryId")),
       String(fd.get("content") || "").trim(),
       String(fd.get("state") || "").trim() || null
     );
+    // Content changed → the stored vector is stale.
+    if (updated) void reindexEntry(updated);
     return { ok: true };
   }
   if (intent === "entry-delete") {
+    // The vector goes with it: neville_entry_embeddings.entry_id is
+    // ON DELETE CASCADE, so there is nothing extra to clean up.
     await deleteEntry(id, Number(fd.get("entryId")));
     return { ok: true };
   }
@@ -128,19 +217,31 @@ export async function action({ request, params }: Route.ActionArgs) {
     return { ok: true };
   }
   if (intent === "status") {
-    await setGoalStatus(id, String(fd.get("status")));
+    await setGoalStatus(id, user.id, String(fd.get("status")));
     return { ok: true };
   }
   if (intent === "delete") {
-    await deleteGoal(id);
+    await deleteGoal(id, user.id);
     throw new Response(null, { status: 302, headers: { Location: "/" } });
   }
   return { ok: false };
 }
 
 export default function GoalPage({ loaderData }: Route.ComponentProps) {
-  const { goal, entries, day, process, streak, endScenes, signs, trend, chats, filter, health } =
-    loaderData;
+  const {
+    goal,
+    entries,
+    day,
+    process,
+    streak,
+    endScenes,
+    signs,
+    trend,
+    chats,
+    filter,
+    journal,
+    health,
+  } = loaderData;
   const [, setSearchParams] = useSearchParams();
   const nav = useNavigation();
   const busy = nav.state !== "idle";
@@ -272,13 +373,25 @@ export default function GoalPage({ loaderData }: Route.ComponentProps) {
         <div className="mb-3 flex items-center justify-between gap-3">
           <h2 className="serif text-lg">Journey log</h2>
           {/* Search / filter — GET form updates the URL query, loader filters. */}
-          <Form method="get" className="flex items-center gap-2">
+          <Form method="get" className="flex flex-wrap items-center justify-end gap-2">
             <input
               name="q"
               defaultValue={filter.q}
-              placeholder="search…"
+              placeholder={filter.mode === "meaning" ? "when did I feel…?" : "search…"}
               className="w-32 rounded-lg border border-[var(--color-line)] bg-[var(--color-base)] px-2.5 py-1 text-xs outline-none focus:border-[var(--color-accent)] sm:w-40"
             />
+            {/* Substring vs. meaning. Disabled (not hidden) when pgvector is
+                absent, so the capability is discoverable with its reason. */}
+            <select
+              name="mode"
+              defaultValue={journal.available ? filter.mode : "text"}
+              disabled={!journal.available}
+              title={journal.reason ?? "Search by wording, or by meaning (your own log, embedded)"}
+              className="rounded-lg border border-[var(--color-line)] bg-[var(--color-base)] px-2 py-1 text-xs disabled:opacity-40"
+            >
+              <option value="text">by words</option>
+              <option value="meaning">by meaning</option>
+            </select>
             <select
               name="kind"
               defaultValue={filter.kind}
@@ -305,6 +418,24 @@ export default function GoalPage({ loaderData }: Route.ComponentProps) {
             )}
           </Form>
         </div>
+        {filter.semantic ? (
+          <p className="mb-3 text-xs text-[var(--color-accent)]">
+            Closest in meaning to “{filter.q}” — your own words, ranked by feeling rather than
+            wording.
+          </p>
+        ) : (
+          filter.mode === "meaning" &&
+          Boolean(filter.q) && (
+            <p className="mb-3 text-xs text-[var(--color-muted)]">
+              Your log isn’t embedded yet — showing word matches. Try again in a moment.
+            </p>
+          )
+        )}
+        {!journal.available && journal.reason && (
+          <p className="mb-3 text-xs text-[var(--color-muted)]">
+            Search by meaning is off: {journal.reason}
+          </p>
+        )}
         <Form method="post" className="mb-5 space-y-2">
           <input type="hidden" name="intent" value="entry" />
           <div className="flex gap-2">
@@ -350,6 +481,12 @@ export default function GoalPage({ loaderData }: Route.ComponentProps) {
                   <span className="uppercase tracking-wide text-[var(--color-accent)]">{e.kind}</span>
                   {e.state && <span>· {e.state}</span>}
                   <span>· {new Date(e.created_at).toLocaleString()}</span>
+                  {/* Cosine distance → a plain closeness reading for the user. */}
+                  {e.distance != null && (
+                    <span className="text-[var(--color-gold)]">
+                      · {Math.round(Math.max(0, 1 - e.distance) * 100)}% match
+                    </span>
+                  )}
                   <span className="ml-auto flex items-center gap-2 opacity-0 transition group-hover:opacity-100">
                     <Form
                       method="post"

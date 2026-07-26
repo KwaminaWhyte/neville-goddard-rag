@@ -117,15 +117,13 @@ export const deleteEntry = (goalId: number, entryId: number) =>
 // --- Coach chat (streaming) ---
 // Streams plain-text tokens. expo/fetch (the SDK 56 default global fetch)
 // supports response.body as a ReadableStream.
-export async function* streamCoach(
-  goalId: number,
-  message: string,
-  history: ChatMsg[]
-): AsyncGenerator<string> {
+// History is never sent — the server loads it itself, scoped to goalId, so a
+// client can't forge assistant turns into the prompt.
+export async function* streamCoach(goalId: number, message: string): AsyncGenerator<string> {
   const res = await fetch(`${API_URL}/api/coach`, {
     method: "POST",
     headers: authHeaders(),
-    body: JSON.stringify({ goalId, message, history }),
+    body: JSON.stringify({ goalId, message }),
   });
   if (!res.body) {
     // Fallback: no streaming available — yield the whole body once.

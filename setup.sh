@@ -81,6 +81,72 @@ if ! ensure_ollama; then
   read -r -p "Press Enter once it's up… " _ || true
   ensure_ollama || die "Still can't reach Ollama at :11434."
 fi
+# Verify every tag exists BEFORE pulling. Otherwise a typo'd or retired tag is
+# only discovered after tens of GB have already downloaded for the earlier models.
+REGISTRY=https://registry.ollama.ai
+ACCEPT_MANIFEST="application/vnd.docker.distribution.manifest.v2+json"
+
+# The registry root itself 404s, so probe a tag that is always published instead.
+registry_reachable() {
+  [[ "$(manifest_status library/llama3.2 latest)" == "200" ]]
+}
+
+manifest_status() {
+  curl -s -o /dev/null -w '%{http_code}' --max-time 15 \
+    -H "Accept: $ACCEPT_MANIFEST" "$REGISTRY/v2/$1/manifests/$2"
+}
+
+# Echoes: local | ok | platform | missing | unknown
+# 200 = published. 412 = published but platform-gated (the mlx builds answer
+# "this model requires macOS"); that's fine here but fatal on Linux. 404 = gone.
+tag_state() {
+  local ref="$1" name tag path code
+  if ollama show "$ref" >/dev/null 2>&1; then echo local; return; fi
+  name="${ref%%:*}"
+  if [[ "$ref" == *:* ]]; then tag="${ref##*:}"; else tag=latest; fi
+  # Bare names live under library/; namespaced ones (user/model) use their path.
+  if [[ "$name" == */* ]]; then path="$name"; else path="library/$name"; fi
+  code="$(manifest_status "$path" "$tag")"
+  case "$code" in
+    200) echo ok ;;
+    412) echo platform ;;
+    404) echo missing ;;
+    *)   echo unknown ;;
+  esac
+}
+
+if registry_reachable; then
+  say "Verifying model tags exist …"
+  BAD=()
+  for m in "$COACH_MODEL" "$EXTRACT_MODEL" "$EMBED_MODEL"; do
+    case "$(tag_state "$m")" in
+      local)    echo "    ok (local)  : $m" ;;
+      ok)       echo "    ok          : $m" ;;
+      platform)
+        if [[ "$OS" == Darwin ]]; then
+          echo "    ok (macOS)  : $m"
+        else
+          echo "    WRONG OS    : $m  (macOS-only build)"
+          BAD+=("$m")
+        fi
+        ;;
+      missing)  echo "    MISSING     : $m"; BAD+=("$m") ;;
+      unknown)  warn "could not verify $m — letting the pull decide" ;;
+    esac
+  done
+  if (( ${#BAD[@]} )); then
+    warn "These tags will not pull on this machine: ${BAD[*]}"
+    echo "    Pick different models (see MODELS.md) and re-run, e.g.:"
+    echo "      COACH_MODEL=qwen2.5:14b EXTRACT_MODEL=qwen2.5:3b EMBED_MODEL=nomic-embed-text ./setup.sh"
+    echo "    Browse available tags at https://ollama.com/library"
+    die "Refusing to start a multi-GB pull with an unusable tag."
+  fi
+else
+  # Offline or registry blocked: don't hard-fail — a local cache may still serve
+  # every model, and `ollama pull` reports its own error if not.
+  warn "Can't reach $REGISTRY — skipping tag verification."
+fi
+
 for m in "$COACH_MODEL" "$EXTRACT_MODEL" "$EMBED_MODEL"; do
   say "Pulling $m …"; ollama pull "$m" || die "ollama pull $m failed (check the tag exists)."
 done
@@ -109,7 +175,10 @@ sed -e "s|__EXTRACT_MODEL__|$EXTRACT_MODEL|" \
     -e "s|__EMBED_DIM__|$EMBED_DIM|" \
     lightrag.env.example > lightrag.env
 
+# EMBED_MODEL is substituted here too: the web app embeds journal entries itself
+# and can't read lightrag.env, so it needs the model we actually pulled.
 sed -e "s|__COACH_MODEL__|$COACH_MODEL|" \
+    -e "s|__EMBED_MODEL__|$EMBED_MODEL|" \
     -e "s|^PG_PORT=.*|PG_PORT=$PG_PORT|" \
     web/.env.example > web/.env
 

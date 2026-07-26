@@ -1,0 +1,87 @@
+{
+  "_readme": [
+    "Corpus metadata for ingest.mjs. `title` is what LightRAG stores as the",
+    "document's file_path, which is exactly what the app cites to the user — so",
+    "keep these titles clean and stable. Changing a title after ingest orphans",
+    "the old citations until that document is re-ingested.",
+    "Keys are paths relative to corpus/ (lectures live in corpus/lectures/).",
+    "Lookup also accepts the bare filename and the filename without .txt.",
+    "`year` is taken from each ebook's own 'First published in ...' front matter,",
+    "not inferred; omit it rather than guess. `kind` is 'book' or 'lecture'.",
+    "Files missing here still ingest — ingest.mjs derives a title from the",
+    "filename and warns so this file can be filled in."
+  ],
+  "version": 1,
+  "sources": {
+    "neville-goddard_at-your-command.txt": {
+      "title": "At Your Command (1939)",
+      "year": 1939,
+      "kind": "book"
+    },
+    "neville-goddard_awakened-imagination-and-the-search.txt": {
+      "title": "Awakened Imagination & The Search (1954)",
+      "year": 1954,
+      "kind": "book"
+    },
+    "neville-goddard_creative-use-of-imagination.txt": {
+      "title": "The Creative Use of Imagination",
+      "year": 1952,
+      "kind": "book"
+    },
+    "neville-goddard_feeling-is-the-secret.txt": {
+      "title": "Feeling Is the Secret (1944)",
+      "year": 1944,
+      "kind": "book"
+    },
+    "neville-goddard_freedom-for-all.txt": {
+      "title": "Freedom for All (1942)",
+      "year": 1942,
+      "kind": "book"
+    },
+    "neville-goddard_he-breaks-the-shell.txt": {
+      "title": "He Breaks the Shell",
+      "year": 1964,
+      "kind": "book"
+    },
+    "neville-goddard_i-know-my-father.txt": {
+      "title": "I Know My Father",
+      "year": 1930,
+      "kind": "book"
+    },
+    "neville-goddard_law-and-the-promise.txt": {
+      "title": "The Law and the Promise (1961)",
+      "year": 1961,
+      "kind": "book"
+    },
+    "neville-goddard_out-of-this-world.txt": {
+      "title": "Out of This World (1949)",
+      "year": 1949,
+      "kind": "book"
+    },
+    "neville-goddard_power-of-awareness.txt": {
+      "title": "The Power of Awareness (1952)",
+      "year": 1952,
+      "kind": "book"
+    },
+    "neville-goddard_prayer-the-art-of-believing.txt": {
+      "title": "Prayer: The Art of Believing (1945)",
+      "year": 1945,
+      "kind": "book"
+    },
+    "neville-goddard_resurrection.txt": {
+      "title": "Resurrection (1966)",
+      "year": 1966,
+      "kind": "book"
+    },
+    "neville-goddard_seedtime-and-harvest.txt": {
+      "title": "Seedtime and Harvest (1956)",
+      "year": 1956,
+      "kind": "book"
+    },
+    "neville-goddard_your-faith-is-your-fortune.txt": {
+      "title": "Your Faith Is Your Fortune (1941)",
+      "year": 1941,
+      "kind": "book"
+    }
+  }
+}

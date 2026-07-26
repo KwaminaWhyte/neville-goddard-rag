@@ -13,7 +13,6 @@ export default function CoachChat({ goalId, initial = [] }: { goalId: number; in
     e.preventDefault();
     const text = input.trim();
     if (!text || busy) return;
-    const history = msgs.map((m) => ({ role: m.role, content: m.content }));
     const next = [...msgs, { role: "user", content: text } as Msg];
     setMsgs([...next, { role: "assistant", content: "" }]);
     setInput("");
@@ -22,7 +21,9 @@ export default function CoachChat({ goalId, initial = [] }: { goalId: number; in
       const res = await fetch("/api/coach", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ goalId, message: text, history }),
+        // No history: the server loads the transcript itself, so the client
+        // can't forge prior turns.
+        body: JSON.stringify({ goalId, message: text }),
       });
       if (!res.body) throw new Error("no stream");
       const reader = res.body.getReader();

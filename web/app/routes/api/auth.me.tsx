@@ -7,6 +7,6 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const pre = preflight(request);
   if (pre) return pre;
   const user = await getUser(request);
-  if (!user) return json({ error: "unauthorized" }, 401);
-  return json({ user });
+  if (!user) return json({ error: "unauthorized" }, 401, request);
+  return json({ user }, 200, request);
 }

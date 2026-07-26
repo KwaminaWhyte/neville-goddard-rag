@@ -8,5 +8,5 @@ export async function action({ request }: ActionFunctionArgs) {
   if (pre) return pre;
   const token = tokenFromRequest(request);
   if (token) await deleteSession(token);
-  return json({ ok: true });
+  return json({ ok: true }, 200, request);
 }

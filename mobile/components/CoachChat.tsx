@@ -23,8 +23,6 @@ export default function CoachChat({
     const text = input.trim();
     if (!text || busy) return;
 
-    // Snapshot history before appending the new exchange.
-    const history = messages;
     setMessages((prev) => [
       ...prev,
       { role: "user", content: text },
@@ -35,7 +33,7 @@ export default function CoachChat({
 
     let acc = "";
     try {
-      for await (const tok of streamCoach(goalId, text, history)) {
+      for await (const tok of streamCoach(goalId, text)) {
         acc += tok;
         const next = acc;
         setMessages((prev) => {
