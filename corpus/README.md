@@ -46,6 +46,17 @@ Titles must be unique — ingest refuses to run on a collision, because LightRAG
 identifies documents by `file_path` and two sources sharing one would merge into
 a single citation.
 
+## Lectures
+
+`corpus/lectures/` holds ~660 lecture transcripts (unlike the 14 books, these
+are **not** committed to git — `.gitignore` excludes `corpus/lectures/`). Their
+source sites reserve copyright and don't grant redistribution, so they stay
+local-only: on disk and in the local LightRAG index, never pushed. `manifest.json`
+entries for them *are* tracked (titles/years are just metadata, not the text
+itself). If you clone this repo fresh, `corpus/lectures/` will be empty — the
+manifest entries referencing it are inert until you repopulate the directory
+yourself.
+
 ## Adding more
 
 Neville left 350+ lectures — adding them enriches the graph. They are numerous
