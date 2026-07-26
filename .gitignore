@@ -13,6 +13,10 @@ web/.env
 # Re-derive PDFs/txt per corpus/README.md if you want them.
 corpus/*.pdf
 
+# Lecture transcripts: scraped for personal local use, source sites reserve
+# copyright and don't grant redistribution — keep local only, never commit.
+corpus/lectures/
+
 # Node
 node_modules/
 web/node_modules/
