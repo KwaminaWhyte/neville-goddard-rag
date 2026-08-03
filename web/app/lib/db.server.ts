@@ -12,7 +12,7 @@ const pool = new Pool({
   port: Number(process.env.PG_PORT || 5432),
   user: process.env.PG_USER || "rag",
   password: process.env.PG_PASSWORD || "rag",
-  database: process.env.PG_DATABASE || "rag",
+  database: process.env.PG_DATABASE || "neville",
   max: 10,
 });
 

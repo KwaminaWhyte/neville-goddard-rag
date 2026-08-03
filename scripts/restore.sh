@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Restore the Postgres `rag` database into the running neville-postgres container
+# Restore the Postgres `neville` database into the running neville-postgres container
 # from a gzip dump produced by scripts/backup.sh.
 #
-# WARNING: this overwrites current data in the `rag` database — including the
+# WARNING: this overwrites current data in the `neville` database — including the
 # LightRAG knowledge graph (AGE + pgvector) and the app's neville_* tracker
 # tables, since they share one database.
 #
@@ -12,7 +12,7 @@
 set -euo pipefail
 
 CONTAINER="neville-postgres"
-DB="rag"
+DB="neville"
 USER="rag"
 
 ASSUME_YES="false"

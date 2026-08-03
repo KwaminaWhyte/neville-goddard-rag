@@ -4,7 +4,13 @@
 # Generated env (created by setup.sh from the .example templates)
 .env
 lightrag.env
+lightrag.native.env
 web/.env
+
+# Native LightRAG venv (pip install lightrag-hku, run manually — replaces
+# the Docker lightrag container; see run_lightrag_native.py)
+lightrag_venv/
+lightrag.log
 
 # Postgres data + LightRAG storage volumes (rebuilt by `docker compose up` + ingest)
 /data/

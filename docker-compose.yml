@@ -8,7 +8,7 @@ services:
     environment:
       POSTGRES_USER: rag
       POSTGRES_PASSWORD: rag
-      POSTGRES_DB: rag
+      POSTGRES_DB: neville
     ports:
       # Publish port comes from root .env (PG_PUBLISH_PORT). setup.sh picks 5544
       # if 5432 is already taken (e.g. a local Homebrew/system Postgres).
@@ -17,7 +17,7 @@ services:
       # PG18 stores data in a major-version subdir under this mount point.
       - ./data/postgres:/var/lib/postgresql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U rag -d rag"]
+      test: ["CMD-SHELL", "pg_isready -U rag -d neville"]
       interval: 5s
       timeout: 5s
       retries: 20
@@ -38,4 +38,10 @@ services:
       - ./data/inputs:/app/data/inputs
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    # Docker Desktop's embedded DNS proxy intermittently drops lookups under
+    # concurrent bursts (MAX_ASYNC>1 hitting api.deepseek.com simultaneously) —
+    # bypass it with public resolvers instead of retrying through the flake.
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
     restart: unless-stopped

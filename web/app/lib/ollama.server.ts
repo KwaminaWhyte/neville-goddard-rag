@@ -1,9 +1,18 @@
-// Ollama client for generation (coach model) and for embedding the user's own
-// journal. Corpus retrieval/embedding still belongs to LightRAG — this embedder
-// exists only for `neville_entry_embeddings`.
+// Chat client for generation (coach model) and Ollama client for embedding the
+// user's own journal. Corpus retrieval/embedding still belongs to LightRAG —
+// this embedder exists only for `neville_entry_embeddings`.
 import "dotenv/config";
 const OLLAMA = process.env.OLLAMA_URL || "http://localhost:11434";
 export const GEN_MODEL = process.env.GEN_MODEL || "gemma4:26b-mlx";
+
+// Coach generation backend — mirrors lightrag.env's LLM_BINDING/LLM_BINDING_HOST
+// pattern. "ollama" (default) hits local Ollama's native /api/chat. "openai"
+// hits any OpenAI-compatible /chat/completions endpoint (e.g. DeepSeek) with
+// GEN_BINDING_API_KEY as a bearer token. Embeddings are untouched by this —
+// EMBED_MODEL/OLLAMA above stay local regardless of GEN_BINDING.
+const GEN_BINDING = process.env.GEN_BINDING || "ollama";
+const GEN_BINDING_HOST = process.env.GEN_BINDING_HOST || OLLAMA;
+const GEN_BINDING_API_KEY = process.env.GEN_BINDING_API_KEY || "";
 
 // Journal embedder. Deliberately its own env var rather than reusing GEN_MODEL
 // (a chat model is not an embedder) and rather than reading lightrag.env's
@@ -66,6 +75,28 @@ export async function chat(
     ctrl.abort();
   }, GEN_TIMEOUT_MS);
   try {
+    const signal = anySignal([ctrl.signal, opts?.signal]);
+    if (GEN_BINDING === "openai") {
+      const res = await fetch(`${GEN_BINDING_HOST}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${GEN_BINDING_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model: GEN_MODEL,
+          messages,
+          stream: false,
+          temperature: opts?.temperature ?? 0.8,
+        }),
+        signal,
+      });
+      if (!res.ok) throw new Error(`coach chat ${res.status}: ${await res.text()}`);
+      const data = await res.json();
+      // `content` stays clean even with reasoning on — reasoning lives in a
+      // separate `reasoning_content` field, ignored here.
+      return data.choices?.[0]?.message?.content ?? "";
+    }
     const res = await fetch(`${OLLAMA}/api/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -75,14 +106,14 @@ export async function chat(
         stream: false,
         options: { temperature: opts?.temperature ?? 0.8 },
       }),
-      signal: anySignal([ctrl.signal, opts?.signal]),
+      signal,
     });
     if (!res.ok) throw new Error(`ollama chat ${res.status}: ${await res.text()}`);
     const data = await res.json();
     return data.message?.content ?? "";
   } catch (e) {
     if (timedOut) {
-      throw new Error(`ollama chat timed out after GEN_TIMEOUT_MS=${GEN_TIMEOUT_MS}ms`);
+      throw new Error(`coach chat timed out after GEN_TIMEOUT_MS=${GEN_TIMEOUT_MS}ms`);
     }
     throw e;
   } finally {
@@ -165,11 +196,27 @@ export async function embed(
   return vec;
 }
 
-// Health probe: reachable + GEN_MODEL pulled. Never throws.
+// Health probe: reachable + GEN_MODEL available. Never throws.
 export async function ollamaHealth(): Promise<{ ok: boolean; detail: string }> {
   try {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), 3000);
+    if (GEN_BINDING === "openai") {
+      const res = await fetch(`${GEN_BINDING_HOST}/models`, {
+        headers: { Authorization: `Bearer ${GEN_BINDING_API_KEY}` },
+        signal: ctrl.signal,
+      });
+      clearTimeout(t);
+      if (!res.ok) return { ok: false, detail: `unreachable: ${res.status}` };
+      const data = await res.json();
+      const models: string[] = Array.isArray(data.data)
+        ? data.data.map((m: { id?: string }) => m.id ?? "")
+        : [];
+      if (!models.includes(GEN_MODEL)) {
+        return { ok: false, detail: `model ${GEN_MODEL} not available` };
+      }
+      return { ok: true, detail: "connected" };
+    }
     const res = await fetch(`${OLLAMA}/api/tags`, { signal: ctrl.signal });
     clearTimeout(t);
     if (!res.ok) return { ok: false, detail: `unreachable: ${res.status}` };
@@ -204,7 +251,50 @@ export async function* chatStream(
     }, GEN_TIMEOUT_MS);
   };
   arm();
+  const signal = anySignal([ctrl.signal, opts?.signal]);
   try {
+    if (GEN_BINDING === "openai") {
+      const res = await fetch(`${GEN_BINDING_HOST}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${GEN_BINDING_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model: GEN_MODEL,
+          messages,
+          stream: true,
+          temperature: opts?.temperature ?? 0.8,
+        }),
+        signal,
+      });
+      if (!res.ok || !res.body) throw new Error(`coach stream ${res.status}`);
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        arm();
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split("\n");
+        buf = lines.pop() ?? "";
+        for (const line of lines) {
+          const data = line.startsWith("data:") ? line.slice(5).trim() : "";
+          if (!data || data === "[DONE]") continue;
+          try {
+            const json = JSON.parse(data);
+            // Reasoning tokens stream via a separate `reasoning_content`
+            // delta field — only `content` is the actual answer.
+            const token = json.choices?.[0]?.delta?.content;
+            if (token) yield token;
+          } catch {
+            /* partial */
+          }
+        }
+      }
+      return;
+    }
     const res = await fetch(`${OLLAMA}/api/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -214,7 +304,7 @@ export async function* chatStream(
         stream: true,
         options: { temperature: opts?.temperature ?? 0.8 },
       }),
-      signal: anySignal([ctrl.signal, opts?.signal]),
+      signal,
     });
     if (!res.ok || !res.body) throw new Error(`ollama stream ${res.status}`);
     const reader = res.body.getReader();
@@ -239,7 +329,7 @@ export async function* chatStream(
     }
   } catch (e) {
     if (stalled) {
-      throw new Error(`ollama stream stalled: no tokens for GEN_TIMEOUT_MS=${GEN_TIMEOUT_MS}ms`);
+      throw new Error(`coach stream stalled: no tokens for GEN_TIMEOUT_MS=${GEN_TIMEOUT_MS}ms`);
     }
     throw e;
   } finally {

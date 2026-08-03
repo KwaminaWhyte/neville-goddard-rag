@@ -23,11 +23,13 @@ async function corpusGraph() {
     const key = process.env.LIGHTRAG_API_KEY || "neville-local-key";
     const r = await fetch(`${base}/documents/status_counts`, { headers: { "X-API-Key": key } });
     if (r.ok) {
+      // LightRAG's actual runtime keys are lowercase (raw DB status column),
+      // despite its own OpenAPI docs showing uppercase — verified live.
       const c = (await r.json()).status_counts ?? {};
       graph = {
-        ready: (c.PROCESSED ?? 0) > 0 && (c.PROCESSING ?? 0) === 0 && (c.PENDING ?? 0) === 0,
-        processing: (c.PROCESSING ?? 0) + (c.PENDING ?? 0),
-        processed: c.PROCESSED ?? 0,
+        ready: (c.processed ?? 0) > 0 && (c.processing ?? 0) === 0 && (c.pending ?? 0) === 0,
+        processing: (c.processing ?? 0) + (c.pending ?? 0),
+        processed: c.processed ?? 0,
       };
     }
   } catch (e) {

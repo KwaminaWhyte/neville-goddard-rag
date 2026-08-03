@@ -200,5 +200,5 @@ Next:
        cd web && npm install && npm run dev
      Open http://localhost:5173
 
-Postgres is on host port $PG_PORT (user/pass/db = rag/rag/rag).
+Postgres is on host port $PG_PORT (user/pass/db = rag/rag/neville).
 EOF
